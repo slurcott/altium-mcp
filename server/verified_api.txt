@@ -1,0 +1,4 @@
+# Member names proven by sandbox runs that completed. One per line.
+# Appended by run_altium_script; safe to edit by hand.
+schm_beginmodify
+schm_endmodify
