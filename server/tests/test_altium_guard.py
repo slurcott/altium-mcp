@@ -336,6 +336,61 @@ class SaveVerification(unittest.TestCase):
         self.assertIn("function SaveDocumentFromSpec(SpecPath: String): String;", other)
 
 
+class SchDocFileReader(unittest.TestCase):
+    """The record layer of schdoc_file, on synthetic records (no client files)."""
+
+    @staticmethod
+    def _stream(*records):
+        out = b""
+        for text in records:
+            body = text.encode("latin1") + b"\0"
+            out += (len(body)).to_bytes(3, "little") + b"\0" + body
+        return out
+
+    def _sheet(self, *records):
+        import schdoc_file
+        data = self._stream("|HEADER=Protel for Windows - Schematic Capture Binary File Version 5.0|",
+                            *records)
+        with mock.patch.object(schdoc_file, "read_ole_stream", return_value=data):
+            return schdoc_file.Sheet("x.SchDoc")
+
+    def test_component_with_pin_and_designator(self):
+        sh = self._sheet(
+            "|RECORD=1|LIBREFERENCE=RES|LOCATION.X=100|LOCATION.Y=200|CURRENTPARTID=1|",
+            "|RECORD=34|OWNERINDEX=0|TEXT=R7|",
+            # body end at (1100, 2000) mils, 300 mil long, pointing +X (orientation 0)
+            "|RECORD=2|OWNERINDEX=0|OWNERPARTID=1|LOCATION.X=110|LOCATION.Y=200|PINLENGTH=30|"
+            "PINCONGLOMERATE=0|DESIGNATOR=1|NAME=A|",
+            "|RECORD=25|LOCATION.X=140|LOCATION.Y=200|TEXT=NET1|")
+        c = sh.components[0]
+        self.assertEqual((c["designator"], c["libref"], c["x"], c["y"]), ("R7", "RES", 1000, 2000))
+        p = c["pins"][0]
+        self.assertEqual((p["x"], p["hot_x"], p["hot_y"]), (1100, 1400, 2000))
+        self.assertEqual(sh.netlabels[0]["text"], "NET1")
+
+    def test_fraction_and_orientation(self):
+        sh = self._sheet(
+            "|RECORD=1|LOCATION.X=0|LOCATION.Y=0|",
+            "|RECORD=2|OWNERINDEX=0|LOCATION.X=10|LOCATION.X_FRAC=50000|LOCATION.Y=10|"
+            "PINLENGTH=20|PINCONGLOMERATE=3|DESIGNATOR=2|")   # orientation 3 = -Y
+        p = sh.components[0]["pins"][0]
+        self.assertEqual((p["x"], p["hot_y"]), (105, -100))
+
+    def test_other_parts_pins_are_dropped(self):
+        sh = self._sheet(
+            "|RECORD=1|CURRENTPARTID=2|",
+            "|RECORD=2|OWNERINDEX=0|OWNERPARTID=1|DESIGNATOR=1|",
+            "|RECORD=2|OWNERINDEX=0|OWNERPARTID=2|DESIGNATOR=5|")
+        self.assertEqual([p["designator"] for p in sh.components[0]["pins"]], ["5"])
+
+    def test_query_filters(self):
+        import schdoc_file
+        sh = self._sheet("|RECORD=25|TEXT=ENC_A|", "|RECORD=25|TEXT=ENC_B|", "|RECORD=25|TEXT=GND|")
+        with mock.patch.object(schdoc_file, "Sheet", return_value=sh):
+            self.assertEqual(len(schdoc_file.query("x", "netlabel", "text", "prefix", "ENC_")), 2)
+            self.assertEqual(len(schdoc_file.query("x", "netlabel", "text", "list", ["GND"])), 1)
+
+
 class RunHistory(unittest.TestCase):
 
     def test_archive_and_mine(self):

@@ -2635,6 +2635,45 @@ async def create_pcb_footprint(ctx: Context, footprint_name: str, description: s
     return json.dumps(result, indent=2)
 
 @mcp.tool()
+async def sch_query(ctx: Context, doc_path: str, kind: str = "component",
+                    match_field: str = None, how: str = "exact", pattern=None,
+                    include_pins: bool = True) -> str:
+    """
+    Query a SAVED schematic sheet (.SchDoc) straight from the file. Never touches
+    Altium, so it cannot wedge anything and is safe during a screen share.
+
+    It reads what is on disk: unsaved edits in Altium are invisible to it. Call
+    save_doc first if the sheet has been edited.
+
+    Args:
+        doc_path (str): full path to a .SchDoc.
+        kind (str): component | pin | netlabel | power | port | wire | junction.
+            Components carry designator, libref, description, comment, x, y
+            (mils), orientation, mirrored, parameters, and pins. Each pin has
+            designator, name, x/y (body end) and hot_x/hot_y: the electrical end,
+            where a wire or label must land. Hot ends are correct for mirrored
+            parts too (verified 36/37 against wiring on a real sheet).
+        match_field (str): field to filter on, e.g. "designator", "libref", "text",
+            "component" (for pins), "name".
+        how (str): exact | list | prefix | contains.
+        pattern: the value (a list for how="list").
+        include_pins (bool): for components, include each part's pins.
+
+    Returns:
+        str: JSON with count and items.
+    """
+    import schdoc_file
+    if Path(doc_path).suffix.lower() != ".schdoc":
+        return json.dumps({"success": False, "error": "sch_query reads .SchDoc files"})
+    try:
+        items = schdoc_file.query(doc_path, kind, match_field, how, pattern, include_pins)
+    except (OSError, ValueError, KeyError) as e:
+        return json.dumps({"success": False, "error": str(e)})
+    return json.dumps({"success": True, "source": "saved file", "count": len(items),
+                       "items": items}, indent=1)
+
+
+@mcp.tool()
 async def save_doc(ctx: Context, doc_path: str) -> str:
     """
     Save one open Altium document by path, and confirm the file changed on disk.

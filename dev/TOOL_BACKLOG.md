@@ -15,23 +15,34 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
 
 ## Open
 
-**B3. `sch_query` and `netlist_query`** (open, 2026-09-21, fixture scripts)
+**B3. `sch_query` and `netlist_query`** (in progress, 2026-09-21, fixture scripts)
 - Evidence: the miner finds an 11-script netlist cluster and a component+pin query
   cluster. Together that is 31 of 77 fixture scripts.
-- Fix: `GENERIC_COMMANDS.md` §2–3. The netlist is built from the saved file,
-  not `DM_Compile`, which can serve a cached netlist.
+- Done: `sch_query`, which reads a saved .SchDoc straight from the file
+  (`server/schdoc_file.py`: a dependency-free OLE reader plus the record parser). It
+  returns components, pins with hot ends, net labels, power ports, ports, wires and
+  junctions, with exact/list/prefix/contains filters, and never touches Altium.
+  Checked on the fixture sheet: the counts match the raw records exactly (107/373/207).
+  274 of 336 non-mirrored pin hot ends land on wiring, against 0 body ends, and all
+  207 net labels sit on a wire.
+- Next: `netlist_query`, which feeds `schdoc_file.Sheet` into `dev/netlist.py`'s
+  connectivity rules. Also still to do: SchLib pins (binary records) through Altium.
 
 **B4. `sch_edit` and `sch_place`** (open, 2026-09-21, fixture scripts)
 - Evidence: the miner finds 8 edit/delete and 8 place/save scripts. `placepico`
   and `placeenc` used `.Location`, which left 17 parts invisible.
 - Fix: `GENERIC_COMMANDS.md` §4–5.
 
-**B5. Pin hot-end is wrong for mirrored parts** (needs Altium, 2026-09-21, audit)
-- Evidence: the header of `dev/check_connectivity.pas`. It is the prime suspect for
-  net labels landing one pin pitch off, which silently grounded three Pico pins.
-- Fix: a bench experiment on one mirrored part (compare `Pin.Location` and
-  `Orientation` before and after `Mirror`), then correct `GetPinHotEnd`. This
-  blocks `sch_label_pins`.
+**B5. Pin hot-end is wrong for mirrored parts - IN ALTIUM'S IN-MEMORY API ONLY** (narrowed 2026-09-21)
+- Evidence: the header of `dev/check_connectivity.pas`, and net labels landing one pin
+  pitch off, which silently grounded three Pico pins.
+- **Narrowed 2026-09-21, offline:** in the SAVED .SchDoc, mirrored parts' pin records
+  are already transformed. The plain hot-end math puts 36 of 37 mirrored-part pins on
+  wiring, and flipping X puts 0 there. So the file geometry is right, and the bug is
+  in the in-memory path (`GetPinHotEnd` on live `ISch_Pin` objects).
+- Fix: `sch_label_pins` computes pin positions from the saved file
+  (`save_doc`, then `schdoc_file`), which avoids the bug entirely. Fixing
+  `GetPinHotEnd` still needs one Altium experiment, but no longer blocks labelling.
 
 **B6. `get_pcb_layer_stackup` uses `LayersInStackCount`** (needs Altium, 2026-09-21, audit)
 - Evidence: `pcb_utils.pas:1076`. GOTCHAS says this name wedged the sandbox, and
