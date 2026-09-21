@@ -60,7 +60,7 @@ produced **77 sandbox scripts**. Sorted by what they did:
 
 ## The commands
 
-### 1. `save_doc(doc)` — replaces 10 scripts
+### 1. `save_doc(doc)` — replaces 10 scripts — **built 2026-09-21 (431bf01)**
 
 This hides the per-kind save rules GOTCHAS §3 took a day to find:
 

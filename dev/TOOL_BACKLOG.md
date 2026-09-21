@@ -15,11 +15,6 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
 
 ## Open
 
-**B2. `save_doc` — one save that knows each document kind's rules** (open, 2026-09-21, fixture scripts)
-- Evidence: 10 of 77 fixture scripts were save retries (`savesym`→`savesym5`,
-  `save`→`save4`). One restart lost unsaved work.
-- Fix: `GENERIC_COMMANDS.md` §1.
-
 **B3. `sch_query` and `netlist_query`** (open, 2026-09-21, fixture scripts)
 - Evidence: the miner finds an 11-script netlist cluster and a component+pin query
   cluster. Together that is 31 of 77 fixture scripts.
@@ -89,3 +84,9 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   reason, where before it silently ran against whatever was focused. A regression test forbids
   `ShowMessage` in `server/AltiumScript`. Verified live 2026-09-21: an unknown command failed cleanly
   in 1.2 s with no dialog, and get_all_designators still round-trips (99dae94).
+- **D6.** (B2) `save_doc(doc_path)`: saves an open .PcbLib, .PcbDoc, .SchLib or .SchDoc by the rule for its
+  kind, refuses (never hangs) if the document still reads clean, and reports success only when the file
+  changed on disk. The Sch rule is a *neutral touch*: a value changed and put back inside
+  BeginModify/EndModify, which marks the document modified without changing its content. Proven
+  2026-09-21 on scratch copies of all four kinds, from clean through dirty to saved, and live through
+  the production bridge (431bf01).
