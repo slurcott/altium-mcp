@@ -1,6 +1,6 @@
 # Generic commands — design proposal
 
-**Status:** proposal, 2026-09-21. Nothing here is built yet.
+**Status:** 2026-09-21. Built: `save_doc` (§1). Also done: the no-modal rule (backlog D5). The rest is a proposal.
 
 **Problem.** Routine edits still mean hand-writing DelphiScript in the sandbox, and
 the sandbox is where the engine wedges. One day of test-fixture work (2026-09-20)
