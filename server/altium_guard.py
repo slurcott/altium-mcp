@@ -249,11 +249,41 @@ def find_altium_dialogs(pids=None):
     return found
 
 
+def _button_count(hwnd):
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    n = [0]
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def cb(child, lparam):
+        cls = ctypes.create_unicode_buffer(32)
+        user32.GetClassNameW(child, cls, 32)
+        if cls.value in ("Button", "TButton") and user32.IsWindowVisible(child):
+            n[0] += 1
+        return True
+
+    user32.EnumChildWindows(hwnd, cb, 0)
+    return n[0]
+
+
 def dismiss_altium_dialogs(pids=None):
-    """WM_CLOSE every Altium-owned modal dialog. Returns the titles closed."""
+    """Close every Altium-owned modal dialog. Returns the titles closed.
+
+    WM_CLOSE first - on a question box it means Cancel/No. Altium's plain
+    "Error: ..." boxes ignore WM_CLOSE (seen 2026-09-21), so a box that is
+    STILL up and has exactly ONE button gets IDOK - pressing its only button.
+    A box with a choice is never answered.
+    """
     hits = find_altium_dialogs(pids)
+    user32 = ctypes.windll.user32 if hits else None
     for hwnd, _, _ in hits:
-        ctypes.windll.user32.PostMessageW(hwnd, 0x0010, 0, 0)   # WM_CLOSE
+        user32.PostMessageW(hwnd, 0x0010, 0, 0)                  # WM_CLOSE
+    if hits:
+        time.sleep(0.5)
+        still = {h for h, _, _ in find_altium_dialogs(pids)}
+        for hwnd, _, _ in hits:
+            if hwnd in still and _button_count(hwnd) == 1:
+                user32.PostMessageW(hwnd, 0x0111, 1, 0)          # WM_COMMAND IDOK
     return [t for _, _, t in hits]
 
 
