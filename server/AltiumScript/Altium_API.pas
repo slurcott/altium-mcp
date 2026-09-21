@@ -1103,6 +1103,8 @@ begin
             Result := ExecuteSearchLibrarySymbol(RequestData);
         'create_pcb_footprint':
             Result := ExecuteCreatePCBFootprint(RequestData);
+        'save_doc':
+            Result := SaveDocumentFromSpec(ROOT_DIR + 'save_doc_spec.txt');
     else
         Result := 'ERROR: Unknown command: ' + CommandName;
     end;

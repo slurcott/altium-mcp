@@ -134,7 +134,8 @@ begin
        (CommandName = 'create_symbols_batch') or
        (CommandName = 'get_footprint_primitives') or
        (CommandName = 'create_footprints_batch') or
-       (CommandName = 'create_pcb_footprint') then
+       (CommandName = 'create_pcb_footprint') or
+       (CommandName = 'save_doc') then
     begin
         Result := '';
         Exit;
@@ -340,6 +341,137 @@ begin
         Result := 'No ' + DocumentKind + ' document found in the focused project'
     else
         Result := 'Found a ' + DocumentKind + ' document but could not focus it';
+end;
+
+// Save one open document, by path, using the rule that works for its kind.
+// Proven on all four kinds 2026-09-21 (clean -> dirty -> saved -> on disk):
+//
+//   PCBLIB / PCB   SetState_DocumentHasChanged on the board forces Modified.
+//                  Adding a primitive to an existing footprint does NOT dirty
+//                  a PcbLib, which is why a plain save used to hang.
+//   SCHLIB / SCH   there is no SetState_DocumentHasChanged, so one component is
+//                  touched inside SCHM_BeginModify/EndModify with its value
+//                  put straight back - the document is marked modified and
+//                  its content is unchanged.
+//
+// Modified is then read ONCE, and DoFileSave is refused rather than called on a
+// clean document: that raises a modal "save a copy?" and blocks forever.
+// ProcessControl.PostProcess clears Modified, so it is deliberately not used.
+//
+// Spec file (written by the save_doc tool, avoiding JSON path escaping):
+//   KIND|PCBLIB|PCB|SCHLIB|SCH
+//   PATH|<full path>
+function SaveDocumentFromSpec(SpecPath: String): String;
+var
+    Spec      : TStringList;
+    DocKind   : String;
+    DocPath   : String;
+    ServerDoc : IServerDocument;
+    PcbLib    : IPCB_Library;
+    Board     : IPCB_Board;
+    SchDoc    : ISch_Document;
+    Iter      : ISch_Iterator;
+    Comp      : ISch_Component;
+    Desc      : String;
+    Strategy  : String;
+    IsDirty   : Boolean;
+begin
+    Result := '';
+    DocKind := '';
+    DocPath := '';
+    Spec := TStringList.Create;
+    try
+        Spec.LoadFromFile(SpecPath);
+        if Spec.Count >= 2 then
+        begin
+            DocKind := GetFieldFromPipeString(Spec[0], 1);
+            DocPath := GetFieldFromPipeString(Spec[1], 1);
+        end;
+    finally
+        Spec.Free;
+    end;
+    if (DocKind = '') or (DocPath = '') then
+    begin
+        Result := 'ERROR: save_doc spec is missing the document kind or path';
+        Exit;
+    end;
+
+    // A document Altium does not have open holds nothing unsaved.
+    ServerDoc := Client.GetDocumentByPath(DocPath);
+    if ServerDoc = nil then
+    begin
+        Result := 'ERROR: not open in Altium, so there is nothing unsaved to save: ' + DocPath;
+        Exit;
+    end;
+    Client.ShowDocument(ServerDoc);
+
+    Strategy := '';
+    if DocKind = 'PCBLIB' then
+    begin
+        PcbLib := PCBServer.GetCurrentPCBLibrary;
+        if PcbLib <> nil then
+        begin
+            PcbLib.Board.SetState_DocumentHasChanged;
+            Strategy := 'SetState_DocumentHasChanged (library board)';
+        end;
+    end
+    else if DocKind = 'PCB' then
+    begin
+        Board := PCBServer.GetCurrentPCBBoard;
+        if Board <> nil then
+        begin
+            Board.SetState_DocumentHasChanged;
+            Strategy := 'SetState_DocumentHasChanged (board)';
+        end;
+    end
+    else if (DocKind = 'SCHLIB') or (DocKind = 'SCH') then
+    begin
+        SchDoc := SchServer.GetCurrentSchDocument;
+        if SchDoc <> nil then
+        begin
+            if DocKind = 'SCHLIB' then
+                Iter := SchDoc.SchLibIterator_Create
+            else
+                Iter := SchDoc.SchIterator_Create;
+            Iter.AddFilter_ObjectSet(MkSet(eSchComponent));
+            Comp := Iter.FirstSchObject;
+            SchDoc.SchIterator_Destroy(Iter);
+            if Comp <> nil then
+            begin
+                SchServer.RobotManager.SendMessage(Comp.I_ObjectAddress, c_BroadCast, SCHM_BeginModify, c_NoEventData);
+                Desc := Comp.ComponentDescription;
+                Comp.ComponentDescription := Desc + ' ';
+                Comp.ComponentDescription := Desc;
+                SchServer.RobotManager.SendMessage(Comp.I_ObjectAddress, c_BroadCast, SCHM_EndModify, c_NoEventData);
+                SchDoc.GraphicallyInvalidate;
+                Strategy := 'neutral touch of one component';
+            end;
+        end;
+    end
+    else
+    begin
+        Result := 'ERROR: save_doc does not handle document kind ' + DocKind;
+        Exit;
+    end;
+
+    if Strategy = '' then
+    begin
+        Result := 'ERROR: could not mark ' + DocKind + ' document modified (server returned nil, ' +
+                  'or a schematic with no components to touch)';
+        Exit;
+    end;
+
+    // Read ONCE. Never call DoFileSave on a document Altium thinks is clean.
+    IsDirty := ServerDoc.Modified;
+    if not IsDirty then
+    begin
+        Result := 'ERROR: document still reads as unmodified after ' + Strategy +
+                  ' - refused to save, because saving a clean document hangs on a modal';
+        Exit;
+    end;
+
+    ServerDoc.DoFileSave('');
+    Result := '{"saved": true, "kind": "' + DocKind + '", "strategy": "' + Strategy + '"}';
 end;
 
 // Zoom the current PCB view to the union bounding box of the given

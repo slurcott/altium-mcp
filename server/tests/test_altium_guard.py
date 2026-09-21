@@ -287,6 +287,55 @@ class ProductionScriptsNeverRaiseModals(unittest.TestCase):
         self.assertIn("Result := 'ERROR: Unknown command: ' + CommandName;", src)
 
 
+class SaveVerification(unittest.TestCase):
+    """save_doc reports success only when the file really changed on disk."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "X.SchLib"
+        self.path.write_bytes(g.CFB_MAGIC + b"\0" * 504)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _touch(self, content=None):
+        before = g.file_state(self.path)
+        if content is not None:
+            self.path.write_bytes(content)
+        os.utime(self.path, ns=(before[0] + 10**9, before[0] + 10**9))
+        return before
+
+    def test_written_file_verifies(self):
+        before = g.file_state(self.path)
+        self._touch()
+        ok, _ = g.verify_saved(self.path, before)
+        self.assertTrue(ok)
+
+    def test_unchanged_mtime_fails(self):
+        before = g.file_state(self.path)
+        ok, detail = g.verify_saved(self.path, before)
+        self.assertFalse(ok)
+        self.assertIn("did not change", detail)
+
+    def test_corrupt_file_fails(self):
+        before = g.file_state(self.path)
+        self._touch(b"not an ole file")
+        ok, detail = g.verify_saved(self.path, before)
+        self.assertFalse(ok)
+        self.assertIn("not a valid Altium", detail)
+
+    def test_kinds(self):
+        self.assertEqual(g.KIND_BY_SUFFIX[".pcbdoc"], "PCB")
+        self.assertEqual(g.KIND_BY_SUFFIX[".schlib"], "SCHLIB")
+
+    def test_dispatcher_routes_save_doc_and_skips_focus(self):
+        api = (SERVER / "AltiumScript" / "Altium_API.pas").read_text(encoding="utf-8")
+        self.assertIn("'save_doc':", api)
+        other = (SERVER / "AltiumScript" / "other_utils.pas").read_text(encoding="utf-8")
+        self.assertIn("(CommandName = 'save_doc')", other)
+        self.assertIn("function SaveDocumentFromSpec(SpecPath: String): String;", other)
+
+
 class RunHistory(unittest.TestCase):
 
     def test_archive_and_mine(self):

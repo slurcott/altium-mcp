@@ -2635,6 +2635,68 @@ async def create_pcb_footprint(ctx: Context, footprint_name: str, description: s
     return json.dumps(result, indent=2)
 
 @mcp.tool()
+async def save_doc(ctx: Context, doc_path: str) -> str:
+    """
+    Save one open Altium document by path, and confirm the file changed on disk.
+
+    Use this instead of scripting DoFileSave. Saving is the most expensive trap
+    in Altium scripting: a document Altium considers unmodified raises a modal
+    "save a copy?" and blocks forever, and edits that should dirty a document
+    often do not (adding a primitive to a footprint does not; SchLib's Modified
+    flag is unreliable). This tool applies the rule proven for each kind:
+
+      .PcbLib / .PcbDoc  SetState_DocumentHasChanged on the board
+      .SchLib / .SchDoc  touch one component inside BeginModify/EndModify with
+                         its value restored - marks it modified, changes nothing
+
+    It refuses rather than hangs if the document still reads as unmodified,
+    and reports success only when the file's timestamp has moved and it is a
+    valid Altium document.
+
+    Args:
+        doc_path (str): full path to a .PcbLib, .PcbDoc, .SchLib or .SchDoc that
+            is open in Altium. A document that is not open has nothing unsaved.
+
+    Returns:
+        str: JSON with saved, verified_on_disk, kind, strategy and detail.
+    """
+    path = os.path.abspath(doc_path).replace("/", "\\")
+    kind = altium_guard.KIND_BY_SUFFIX.get(Path(path).suffix.lower())
+    if kind is None:
+        return json.dumps({"success": False,
+                           "error": f"save_doc handles .PcbLib, .PcbDoc, .SchLib and .SchDoc, not {path}"})
+    before = altium_guard.file_state(path)
+    if before is None:
+        return json.dumps({"success": False, "error": f"no such file: {path}"})
+
+    spec = EXCHANGE_DIR / "save_doc_spec.txt"
+    # cp1252: the bridge reads spec files as ANSI
+    spec.write_text(f"KIND|{kind}\nPATH|{path}\n", encoding="cp1252", errors="replace")
+
+    response = await altium_bridge.execute_command("save_doc", {})
+    if not response.get("success", False):
+        return json.dumps({"success": False, "saved": False,
+                           "error": response.get("error", "unknown error")}, indent=2)
+
+    result = response.get("result", {})
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except ValueError:
+            result = {"raw": result}
+
+    ok, detail = altium_guard.verify_saved(path, before)
+    return json.dumps({
+        "success": ok,
+        "saved": bool(result.get("saved")),
+        "verified_on_disk": ok,
+        "kind": kind,
+        "strategy": result.get("strategy"),
+        "detail": detail if ok else f"Altium reported a save, but: {detail}",
+    }, indent=2)
+
+
+@mcp.tool()
 async def get_server_status(ctx: Context) -> str:
     """Get the current status of the Altium MCP server"""
     status = {

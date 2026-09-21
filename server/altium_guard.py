@@ -649,6 +649,42 @@ def lint_script(body, corpus, sandbox_src, allow_new_api=()):
 
 
 # =============================================================================
+# Save verification - never take Altium's word that a file was written
+# =============================================================================
+
+KIND_BY_SUFFIX = {".pcblib": "PCBLIB", ".pcbdoc": "PCB", ".schlib": "SCHLIB", ".schdoc": "SCH"}
+CFB_MAGIC = bytes.fromhex("D0CF11E0A1B11AE1")   # every Altium binary document is an OLE file
+
+
+def file_state(path):
+    """(mtime_ns, size) of a file, or None if it does not exist."""
+    try:
+        st = Path(path).stat()
+        return st.st_mtime_ns, st.st_size
+    except OSError:
+        return None
+
+
+def verify_saved(path, before):
+    """(ok, detail): did a save actually land on disk since `before` (a file_state)?"""
+    after = file_state(path)
+    if after is None:
+        return False, "file is missing after the save"
+    if before is not None and after[0] <= before[0]:
+        return False, "file modification time did not change - nothing was written"
+    if after[1] == 0:
+        return False, "file is empty after the save"
+    try:
+        with open(path, "rb") as f:
+            head = f.read(8)
+    except OSError as e:
+        return False, f"file unreadable after the save: {e}"
+    if head != CFB_MAGIC:
+        return False, "file is not a valid Altium (OLE compound) document after the save"
+    return True, f"written: {after[1]} bytes"
+
+
+# =============================================================================
 # Run history - the raw material for improving the toolset
 #
 # Every sandbox run and every refusal is archived with its outcome. A script
