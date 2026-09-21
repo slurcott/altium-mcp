@@ -455,7 +455,8 @@ class Corpus:
                 for ln in Path(verified_file).read_text(encoding="utf-8").splitlines():
                     ln = ln.strip().lower()
                     if ln and not ln.startswith("#"):
-                        self.members.add(ln)
+                        self.members.add(ln)    # proven as a member ...
+                        self.globals.add(ln)    # ... or as a global constant/function
             except OSError:
                 pass
 
@@ -465,12 +466,22 @@ class Corpus:
         files = sorted(root.glob("server/**/*.pas")) + sorted(root.glob("dev/**/*.pas"))
         return cls(files, verified_file)
 
-    def new_members(self, body):
-        """Member names in `body` that no run has proven yet."""
-        _, rest, _ = split_var_block(body)
-        return sorted({name for name, recv, _ in _references(tokenize(rest))
-                       if recv is not None and name not in self.members
-                       and name not in DENYLIST})
+    def new_members(self, body, sandbox_src=""):
+        """Names in `body` that no run has proven yet: unknown members, and
+        (given the sandbox source) unknown bare globals such as SCHM_ constants."""
+        decls, rest, _ = split_var_block(body)
+        own = {n.lower() for n, _ in decls}
+        available = sandbox_declared(sandbox_src) if sandbox_src else set()
+        new = set()
+        for name, recv, _ in _references(tokenize(rest)):
+            if name in DENYLIST:
+                continue
+            if recv is not None:
+                if name not in self.members:
+                    new.add(name)
+            elif sandbox_src and name not in self.globals and name not in own                     and name not in available and name not in self.declared:
+                new.add(name)
+        return sorted(new)
 
     def record_verified(self, names):
         """Remember member names that a COMPLETED run just exercised.
@@ -480,7 +491,7 @@ class Corpus:
         member on the path it took. Names are appended to verified_api.txt so
         the next lint accepts them.
         """
-        names = [n for n in names if n not in self.members]
+        names = [n for n in names if n not in self.members or n not in self.globals]
         if not names or not self.verified_file:
             return []
         path = Path(self.verified_file)
@@ -490,6 +501,7 @@ class Corpus:
         with open(path, "a", encoding="utf-8") as f:
             f.write(header + "".join(n + "\n" for n in names))
         self.members.update(names)
+        self.globals.update(names)
         return names
 
 
@@ -574,6 +586,8 @@ def lint_script(body, corpus, sandbox_src, allow_new_api=()):
         if recv is None:
             if name in known_bare:
                 continue
+            if name in allowed and name not in corpus.declared:
+                continue    # a real global the caller is deliberately probing
             if uses_with and name in corpus.members:
                 continue    # probably a member reached through a `with` block
             if name in corpus.declared:

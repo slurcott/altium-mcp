@@ -133,7 +133,7 @@ def main(argv):
                       lint_warnings=report["warnings"],
                       result=RESULT.read_text(encoding="utf-8", errors="replace")[:2000])
         if not no_lint:
-            for n in corpus.record_verified(corpus.new_members(body)):
+            for n in corpus.record_verified(corpus.new_members(body, SANDBOX_PAS.read_text(encoding="utf-8"))):
                 print("  recorded as verified API:", n)
         print("--- RESULT ---")
         print(RESULT.read_text(encoding="utf-8", errors="replace").strip())

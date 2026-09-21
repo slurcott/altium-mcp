@@ -152,6 +152,36 @@ class NewApi(unittest.TestCase):
             self.assertEqual(c2.record_verified(new), [])     # no duplicates
 
 
+class NewGlobals(unittest.TestCase):
+    """Real global constants the repo has never used (the fixture session's
+    SCHM_BeginModify) must be allowable and learnable, not just members."""
+
+    BODY = "SchServer.RobotManager.SendMessage(Obj1.I_ObjectAddress, c_BroadCast, SCHM_FooXyz, c_NoEventData);"
+
+    def test_unknown_global_is_refused_then_allowed(self):
+        self.assertTrue(any("schm_fooxyz" in e for e in lint(self.BODY)["errors"]))
+        r = g.lint_script(self.BODY, CORPUS, SANDBOX_SRC, allow_new_api=["SCHM_FooXyz"])
+        self.assertEqual(r["errors"], [])
+
+    def test_allow_does_not_admit_another_scripts_local(self):
+        r = g.lint_script("I4 := 1;", CORPUS, SANDBOX_SRC, allow_new_api=["I4"])
+        self.assertTrue(r["errors"])
+
+    def test_completed_run_learns_the_global(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            learned = Path(tmp) / "verified_api.txt"
+            c = g.Corpus.from_repo(REPO, verified_file=learned)
+            new = c.new_members(self.BODY, SANDBOX_SRC)
+            self.assertEqual(new, ["schm_fooxyz"])
+            c.record_verified(new)
+            c2 = g.Corpus.from_repo(REPO, verified_file=learned)
+            self.assertEqual(g.lint_script(self.BODY, c2, SANDBOX_SRC)["errors"], [])
+
+    def test_own_vars_are_not_reported_as_new(self):
+        body = "var\n    Count : Integer;\nCount := 1;"
+        self.assertEqual(CORPUS.new_members(body, SANDBOX_SRC), [])
+
+
 class LintWarnsOnSilentTraps(unittest.TestCase):
 
     def assertWarned(self, body, fragment):

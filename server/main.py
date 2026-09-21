@@ -1149,8 +1149,9 @@ async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 12
         script (str): DelphiScript statements to execute (body only), optionally
             preceded by a `var` block.
         timeout_seconds (int): How long to wait for completion (default 120).
-        allow_new_api (list): member names you are deliberately probing that no
-            script has used yet. Probe new names in a short script of their own.
+        allow_new_api (list): names you are deliberately probing that no script
+            has used yet - members (.Foo) or global constants/functions (e.g.
+            SCHM_BeginModify). Probe new names in a short script of their own.
         lint (bool): set False only to bypass the linter when it is wrong - and
             say so, so the corpus can be fixed.
 
@@ -1219,7 +1220,7 @@ async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 12
 
     if SANDBOX_RESULT.exists():
         result_text = SANDBOX_RESULT.read_text(encoding="utf-8", errors="replace").strip()
-        learned = corpus.record_verified(corpus.new_members(script)) if lint else []
+        learned = corpus.record_verified(corpus.new_members(script, src)) if lint else []
         out = {"success": True, "result": result_text, "steps": steps,
                "dialogs_dismissed": dialogs}
         if report["warnings"]:
