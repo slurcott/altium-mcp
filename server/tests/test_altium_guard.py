@@ -240,6 +240,23 @@ class Preflight(unittest.TestCase):
         self.assertIsNone(g.read_wedge())
 
 
+class ProductionScriptsNeverRaiseModals(unittest.TestCase):
+    """A modal blocks the bridge until someone clicks it; the caller sees only a
+    120 s timeout that looks exactly like a wedge. Report errors as 'ERROR: ...'."""
+
+    def test_no_showmessage_in_production_units(self):
+        for pas in sorted((SERVER / "AltiumScript").glob("*.pas")):
+            toks = g.tokenize(pas.read_text(encoding="utf-8", errors="replace"))
+            lines = [ln for kind, text, ln in toks
+                     if kind == "ident" and text.lower() in ("showmessage", "showinfo",
+                                                              "showerror", "showwarning")]
+            self.assertEqual(lines, [], f"{pas.name}: modal dialog call on line(s) {lines}")
+
+    def test_unknown_command_returns_an_error(self):
+        src = (SERVER / "AltiumScript" / "Altium_API.pas").read_text(encoding="utf-8")
+        self.assertIn("Result := 'ERROR: Unknown command: ' + CommandName;", src)
+
+
 class RunHistory(unittest.TestCase):
 
     def test_archive_and_mine(self):

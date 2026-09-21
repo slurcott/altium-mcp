@@ -108,11 +108,11 @@ begin
         Result := Copy(S, FieldStart, Length(S) - FieldStart + 1);
 end;
 
-// Modify the EnsureDocumentFocused function to handle all document types
-// and return more detailed information.
+// Focus the document a command needs. Returns '' on success, otherwise the
+// reason it could not, for the caller to report as an error.
 // ViewTypeHint is only consulted by commands that can target more than one
 // document kind (currently take_view_screenshot); pass '' otherwise.
-function EnsureDocumentFocused(CommandName: String; ViewTypeHint: String): Boolean;
+function EnsureDocumentFocused(CommandName: String; ViewTypeHint: String): String;
 var
     I           : Integer;
     Project     : IProject;
@@ -123,7 +123,7 @@ var
     LogMessage  : String;
     OutJobPath: String;
 begin
-    Result := False;
+    Result := '';
     DocFound := False;
     DocumentKind := 'PCB'; // Default
 
@@ -136,7 +136,7 @@ begin
        (CommandName = 'create_footprints_batch') or
        (CommandName = 'create_pcb_footprint') then
     begin
-        Result := True;
+        Result := '';
         Exit;
     end;
 
@@ -218,7 +218,8 @@ begin
     Project := GetWorkspace.DM_FocusedProject;
     If Project = Nil Then
     begin
-        // No project is open
+        Result := 'No project is open - open the project containing the ' +
+                  DocumentKind + ' document';
         Exit;
     end;
 
@@ -227,7 +228,7 @@ begin
     begin
         if GetBoardSafe(0) <> Nil then
         begin
-            Result := True;
+            Result := '';
             Exit;
         end;
     end
@@ -236,7 +237,7 @@ begin
         CurrentDoc := SchServer.GetCurrentSchDocument;
         if CurrentDoc <> Nil then
         begin
-            Result := True;
+            Result := '';
             Exit;
         end;
     end
@@ -245,7 +246,7 @@ begin
         CurrentDoc := SchServer.GetCurrentSchDocument;
         if (CurrentDoc <> Nil) and (CurrentDoc.ObjectId = eSchLib) then
         begin
-            Result := True;
+            Result := '';
             Exit;
         end;
     end
@@ -253,7 +254,7 @@ begin
     begin
         if GetPcbLibSafe(0) <> Nil then
         begin
-            Result := True;
+            Result := '';
             Exit;
         end;
     end
@@ -262,7 +263,7 @@ begin
         OutJobPath := GetOpenOutputJob();
         if OutJobPath <> '' then
         begin
-            Result := True;
+            Result := '';
             Exit;
         end;
     end;
@@ -284,7 +285,7 @@ begin
             begin
                 if GetBoardSafe(0) <> Nil then
                 begin
-                    Result := True;
+                    Result := '';
                     // ShowMessage('Successfully focused PCB document');
                     Exit;
                 end;
@@ -294,7 +295,7 @@ begin
                 CurrentDoc := SchServer.GetCurrentSchDocument;
                 if (CurrentDoc <> Nil) then
                 begin
-                    Result := True;
+                    Result := '';
                     // ShowMessage('Successfully focused SCH document');
                     Exit;
                 end;
@@ -304,7 +305,7 @@ begin
                 CurrentDoc := SchServer.GetCurrentSchDocument;
                 if (CurrentDoc <> Nil) and (CurrentDoc.ObjectID = eSchLib) then
                 begin
-                    Result := True;
+                    Result := '';
                     // ShowMessage('Successfully focused SCHLIB document');
                     Exit;
                 end;
@@ -313,7 +314,7 @@ begin
             begin
                 if GetPcbLibSafe(0) <> Nil then
                 begin
-                    Result := True;
+                    Result := '';
                     Exit;
                 end;
             end
@@ -322,7 +323,7 @@ begin
                 CurrentDoc := SchServer.GetCurrentSchDocument;
                 if (CurrentDoc <> Nil) then
                 begin
-                    Result := True;
+                    Result := '';
                     Exit;
                 end;
             end;
@@ -333,16 +334,12 @@ begin
     // Could use IWorkspace.DM_ProjectCount and for loop
 
     // No matching document found or couldn't be focused
+    // Report instead of raising a modal: a modal blocks the bridge until someone
+    // clicks it, and the caller sees only a 120 s timeout.
     if not DocFound then
-    begin
-        ShowMessage('Error: No ' + DocumentKind + ' document found in the project.');
-    end
+        Result := 'No ' + DocumentKind + ' document found in the focused project'
     else
-    begin
-        ShowMessage('Error: Found ' + DocumentKind + ' document but could not focus it.');
-    end;
-    
-    Result := False;
+        Result := 'Found a ' + DocumentKind + ' document but could not focus it';
 end;
 
 // Zoom the current PCB view to the union bounding box of the given

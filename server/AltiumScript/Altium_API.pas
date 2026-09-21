@@ -75,8 +75,7 @@ begin
         end
         else
         begin
-            ShowMessage('Error: No designators found for get_component_pins');
-            Result := '';
+            Result := 'ERROR: No designators found for get_component_pins';
         end;
     finally
         DesignatorsList.Free;
@@ -286,8 +285,7 @@ begin
         end
         else
         begin
-            ShowMessage('Error: No component name provided');
-            Result := '';
+            Result := 'ERROR: No component name provided';
         end;
     finally
         PinsList.Free;
@@ -413,8 +411,7 @@ begin
         end
         else
         begin
-            ShowMessage('Error: No designator found for set_component_position');
-            Result := '';
+            Result := 'ERROR: No designator found for set_component_position';
         end;
     finally
     end;
@@ -491,8 +488,7 @@ begin
         end
         else
         begin
-            ShowMessage('Error: No designators found for move_components');
-            Result := '';
+            Result := 'ERROR: No designators found for move_components';
         end;
     finally
         DesignatorsList.Free;
@@ -819,7 +815,6 @@ begin
         end
         else
         begin
-            ShowMessage('Error: Source or destination lists are empty');
             Result := '{"success": false, "error": "Source or destination lists are empty"}';
         end;
     finally
@@ -894,7 +889,6 @@ begin
         end
         else
         begin
-            ShowMessage('Error: No container names specified');
             Result := '{"success": false, "error": "No container names specified"}';
         end;
     finally
@@ -1018,6 +1012,7 @@ var
     HintIdx    : Integer;
     HintStart  : Integer;
     HintValue  : String;
+    FocusError : String;
 begin
     Result := '';
 
@@ -1038,7 +1033,14 @@ begin
         end;
     end;
 
-    EnsureDocumentFocused(CommandName, ViewHint);
+    // A command that cannot get its document must say so, not run against
+    // whatever happens to be focused.
+    FocusError := EnsureDocumentFocused(CommandName, ViewHint);
+    if FocusError <> '' then
+    begin
+        Result := 'ERROR: ' + FocusError;
+        Exit;
+    end;
 
     // Direct command execution based on the command name
     case CommandName of
@@ -1102,7 +1104,7 @@ begin
         'create_pcb_footprint':
             Result := ExecuteCreatePCBFootprint(RequestData);
     else
-        ShowMessage('Error: Unknown command: ' + CommandName);
+        Result := 'ERROR: Unknown command: ' + CommandName;
     end;
 end;
 
@@ -1202,7 +1204,7 @@ begin
     // Check if request file exists
     if not FileExists(REQUEST_FILE) then
     begin
-        ShowMessage('Error: No request file found at ' + REQUEST_FILE);
+        WriteResponse(False, '', 'No request file found at ' + REQUEST_FILE);
         Exit;
     end;
 
@@ -1250,13 +1252,11 @@ begin
                 else
                 begin
                     WriteResponse(False, '', 'Command execution failed');
-                    ShowMessage('Error: Command execution failed');
                 end;
             end
             else
             begin
                 WriteResponse(False, '', 'No command specified');
-                ShowMessage('Error: No command specified');
             end;
         finally
             RequestData.Free;
@@ -1265,7 +1265,6 @@ begin
     except
         // Simple exception handling without the specific exception type
         WriteResponse(False, '', 'Exception occurred during script execution');
-        ShowMessage('Error: Exception occurred during script execution');
     end;
 end;
 

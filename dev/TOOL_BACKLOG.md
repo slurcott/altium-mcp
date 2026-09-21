@@ -15,14 +15,6 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
 
 ## Open
 
-**B1. Production commands raise modals instead of returning errors** (open, 2026-09-21, smoke test)
-- Evidence: `Altium_API.pas` has 11 `ShowMessage` calls, `other_utils.pas` 6 and
-  `schematic_utils.pas` 1. An unknown command shows a modal and writes **no**
-  response, so the bridge waits 120 s and the call looks like a wedge. This
-  happened in the 2026-09-21 smoke test.
-- Fix: replace each with `WriteResponse(False, '', <msg>)`. Step 1 of
-  `GENERIC_COMMANDS.md`.
-
 **B2. `save_doc` — one save that knows each document kind's rules** (open, 2026-09-21, fixture scripts)
 - Evidence: 10 of 77 fixture scripts were save retries (`savesym`→`savesym5`,
   `save`→`save4`). One restart lost unsaved work.
@@ -92,3 +84,7 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
 - **D2.** Sandbox linter, `allow_new_api`, and `verified_api.txt` learning (74452d8).
 - **D3.** Dialog dismissal limited to X2 windows; OK is pressed on single-button boxes (f8701b6).
 - **D4.** Run archive and `dev/mine_history.py`.
+- **D5.** (B1) All 12 production modals now return `ERROR:` instead. An unknown command answers at once
+  rather than timing out after 120 s. A command whose document cannot be focused now fails with the
+  reason, where before it silently ran against whatever was focused. A regression test forbids
+  `ShowMessage` in `server/AltiumScript` (pending: live check against Altium).

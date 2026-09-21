@@ -1326,7 +1326,7 @@ begin
     Project := GetWorkspace.DM_FocusedProject;
     If (Project = Nil) Then
     begin
-        ShowMessage('Error: No project is currently open');
+        Result := 'ERROR: No project is currently open';
         Exit;
     end;
 
