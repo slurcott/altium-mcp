@@ -89,6 +89,7 @@ def main(argv):
         print("LINT CLEAN" if not report["errors"] else "LINT FAILED")
         return 0 if not report["errors"] else 1
     if not no_lint and report["errors"]:
+        g.archive_run("dev/run_sandbox.py", "refused_lint", body, lint_errors=report["errors"])
         print("REFUSED BY THE LINTER - nothing was sent to Altium")
         print_lint(report)
         return 1
@@ -96,6 +97,7 @@ def main(argv):
 
     ok, msg = g.preflight()
     if not ok:
+        g.archive_run("dev/run_sandbox.py", "refused_preflight", body, reason=msg)
         print("REFUSING TO RUN\n" + msg)
         return 1
     print(msg)
@@ -127,6 +129,9 @@ def main(argv):
         print("  LOG:", s)
 
     if RESULT.exists():
+        g.archive_run("dev/run_sandbox.py", "ok", body, steps=steps,
+                      lint_warnings=report["warnings"],
+                      result=RESULT.read_text(encoding="utf-8", errors="replace")[:2000])
         if not no_lint:
             for n in corpus.record_verified(corpus.new_members(body)):
                 print("  recorded as verified API:", n)
@@ -136,11 +141,13 @@ def main(argv):
 
     if steps:
         g.mark_wedged(f"sandbox script died after step: {steps[-1]}")
+        g.archive_run("dev/run_sandbox.py", "died", body, steps=steps)
         print("\n--- SCRIPT DIED MID-RUN ---")
         print(f"last step reached: {steps[-1]}")
         print("The statement AFTER that is what crashed or paused the script.")
     else:
         g.mark_wedged("sandbox script wrote no log at all")
+        g.archive_run("dev/run_sandbox.py", "no_log", body)
         print("\n--- NO LOG WRITTEN - the executor is almost certainly PAUSED IN THE DEBUGGER ---")
         print("A compile error the linter missed, or a stray breakpoint in Sandbox.pas.")
     print("\nAltium is now marked WEDGED; further runs refuse until it is restarted.")

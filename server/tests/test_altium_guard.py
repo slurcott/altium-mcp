@@ -240,6 +240,30 @@ class Preflight(unittest.TestCase):
         self.assertIsNone(g.read_wedge())
 
 
+class RunHistory(unittest.TestCase):
+
+    def test_archive_and_mine(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(g, "HISTORY_DIR", Path(tmp)):
+                body = ("Obj2 := Obj1.SchIterator_Create;\n"
+                        "Obj2.AddFilter_ObjectSet(MkSet(eNetlabel));\n"
+                        "Obj3 := Obj2.FirstSchObject;\nS1 := Obj3.Text;")
+                for _ in range(3):
+                    g.archive_run("test", "ok", body, steps=["sandbox start"])
+                g.archive_run("test", "no_log", "B2 := 1;")
+                files = sorted(Path(tmp).glob("*.json"))
+                self.assertEqual(len(files), 4)
+                self.assertEqual(json.loads(files[-1].read_text())["outcome"], "no_log")
+
+                sys.path.insert(0, str(REPO / "dev"))
+                import mine_history
+                runs = mine_history.load_archive()
+                clusters = mine_history.cluster(
+                    [(r["_file"], mine_history.fingerprint(r["body"])) for r in runs])
+                self.assertEqual(len(clusters[0]["members"]), 3)
+                self.assertIn("enetlabel", clusters[0]["core"])
+
+
 class CrossSessionLock(unittest.TestCase):
 
     def setUp(self):

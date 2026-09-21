@@ -279,6 +279,7 @@ class AltiumBridge:
             if not RESPONSE_FILE.exists():
                 logger.error("Timeout waiting for response from Altium")
                 altium_guard.mark_wedged(f"'{command}' got no response in {timeout} s")
+                altium_guard.archive_run("bridge", "timeout", command=command, params=params)
                 return {"success": False,
                         "error": "No response received from Altium (timeout). Altium is now "
                                  "marked wedged and further runs will be refused until it is "
@@ -1170,6 +1171,8 @@ async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 12
     if lint:
         report = altium_guard.lint_script(script, corpus, src, allow_new_api or ())
         if report["errors"]:
+            altium_guard.archive_run("run_altium_script", "refused_lint", script,
+                                     lint_errors=report["errors"])
             return json.dumps({
                 "success": False,
                 "error": "script refused by the linter - nothing was sent to Altium",
@@ -1178,6 +1181,7 @@ async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 12
 
     ok, why = altium_guard.preflight()
     if not ok:
+        altium_guard.archive_run("run_altium_script", "refused_preflight", script, reason=why)
         return json.dumps({"success": False, "error": f"refused to run: {why}",
                            "lint_warnings": report["warnings"]}, indent=2)
 
@@ -1222,6 +1226,8 @@ async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 12
             out["lint_warnings"] = report["warnings"]
         if learned:
             out["api_recorded_as_verified"] = learned
+        altium_guard.archive_run("run_altium_script", "ok", script, steps=steps,
+                                 lint_warnings=report["warnings"], result=result_text[:2000])
         return json.dumps(out, indent=2)
 
     recovery = ("Do NOT simply retry - each launch against a paused executor can start another "
@@ -1233,6 +1239,7 @@ async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 12
 
     if steps:
         altium_guard.mark_wedged(f"sandbox script died after step: {steps[-1]}")
+        altium_guard.archive_run("run_altium_script", "died", script, steps=steps)
         return json.dumps({
             "success": False,
             "error": "script started but did not finish",
@@ -1245,6 +1252,7 @@ async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 12
             "dialogs_dismissed": dialogs}, indent=2)
 
     altium_guard.mark_wedged("sandbox script wrote no log at all")
+    altium_guard.archive_run("run_altium_script", "no_log", script)
     return json.dumps({
         "success": False,
         "error": "no log written - the script never reached its first statement",

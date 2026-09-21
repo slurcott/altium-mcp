@@ -635,6 +635,32 @@ def lint_script(body, corpus, sandbox_src, allow_new_api=()):
 
 
 # =============================================================================
+# Run history - the raw material for improving the toolset
+#
+# Every sandbox run and every refusal is archived with its outcome. A script
+# written three times is a tool that does not exist yet; dev/mine_history.py
+# finds those clusters, and the wedges and lint refusals, for TOOL_BACKLOG.md.
+# Kept in the exchange directory, NOT the repo: bodies carry client paths.
+# =============================================================================
+
+HISTORY_DIR = EXCHANGE_DIR / "history"
+
+
+def archive_run(source, outcome, body="", **details):
+    """Record one run. outcome: ok | refused_lint | refused_preflight | died | no_log | timeout."""
+    try:
+        HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+        # unique suffix: two quick refusals can land in the same millisecond
+        stamp = (time.strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns() % 10**9:09d}-"
+                 + os.urandom(2).hex())
+        (HISTORY_DIR / f"{stamp}_{outcome}.json").write_text(json.dumps(
+            {"when": time.strftime("%Y-%m-%d %H:%M:%S"), "source": source,
+             "outcome": outcome, "body": body, **details}, indent=2), encoding="utf-8")
+    except OSError:
+        pass    # history is a convenience; never let it break a run
+
+
+# =============================================================================
 # Injection
 # =============================================================================
 
