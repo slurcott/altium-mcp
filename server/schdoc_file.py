@@ -153,12 +153,17 @@ class Sheet:
             params = {k.get("NAME", ""): k.get("TEXT", "") for k in kids
                       if _rtype(k) == REC_PARAMETER and k.get("NAME")}
             part = r.get("CURRENTPARTID", "1")
+            mode = r.get("DISPLAYMODE", "0") or "0"
             pins = []
             for k in kids:
                 if _rtype(k) != REC_PIN:
                     continue
                 # multi-part components store every part's pins; keep this part's
                 if k.get("OWNERPARTID", part) not in (part, "-1", "0"):
+                    continue
+                # a symbol with alternate display modes stores each mode's pins, at
+                # different positions; only the displayed mode's pins are on the sheet
+                if (k.get("OWNERPARTDISPLAYMODE", "0") or "0") != mode:
                     continue
                 pins.append(self._pin(k))
             self.components.append({
@@ -177,7 +182,7 @@ class Sheet:
         self.netlabels = [self._text_obj(r) for r in self.records if _rtype(r) == REC_NETLABEL]
         self.power = [dict(self._text_obj(r), style=int(r.get("STYLE", "0") or 0))
                       for r in self.records if _rtype(r) == REC_POWER]
-        self.ports = [dict(self._text_obj(r), text=r.get("NAME", ""))
+        self.ports = [dict(self._text_obj(r), text=r.get("NAME", ""), width=_coord(r, "WIDTH"))
                       for r in self.records if _rtype(r) == REC_PORT]
         self.junctions = [(_coord(r, "LOCATION.X"), _coord(r, "LOCATION.Y"))
                           for r in self.records if _rtype(r) == REC_JUNCTION]
@@ -211,6 +216,8 @@ def _match(value, how, pattern):
         return True
     v = value or ""
     if how == "list":
+        if isinstance(pattern, str):     # MCP passes lists as "A,B,C"
+            pattern = [x.strip() for x in pattern.split(",")]
         return v in pattern
     if how == "prefix":
         return v.startswith(pattern)
@@ -239,3 +246,65 @@ def query(path, kind="component", match_field=None, how="exact", pattern=None, i
     if kind == "component" and not include_pins:
         items = [{k: v for k, v in i.items() if k != "pins"} for i in items]
     return items
+
+
+# ------------------------------------------------------------------------ netlist
+def _netlist_builder():
+    """dev/netlist.py's connectivity rules (wires, junctions, pin hot ends, labels,
+    power ports, ports), which were checked against a hand-drawn reference sheet."""
+    import importlib.util
+    path = Path(__file__).resolve().parents[1] / "dev" / "netlist.py"
+    spec = importlib.util.spec_from_file_location("altium_netlist", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.build
+
+
+def sheet_records(sheet):
+    """A Sheet in the record shape dev/netlist.py consumes (integer mils)."""
+    r = lambda v: int(round(v))
+    recs = {"WIRE": [], "JUNC": [], "PIN": [], "PWR": [], "PORT": [], "NLBL": [], "COMP": []}
+    for w in sheet.wires:
+        for (x1, y1), (x2, y2) in zip(w, w[1:]):
+            recs["WIRE"].append([r(x1), r(y1), r(x2), r(y2)])
+    recs["JUNC"] = [[r(x), r(y)] for x, y in sheet.junctions]
+    for c in sheet.components:
+        recs["COMP"].append([c["designator"], c["libref"], "", c["comment"]])
+        for p in c["pins"]:
+            recs["PIN"].append([c["designator"], p["designator"], r(p["hot_x"]), r(p["hot_y"])])
+    recs["PWR"] = [[r(o["x"]), r(o["y"]), o["text"], o.get("style", 0)] for o in sheet.power]
+    recs["PORT"] = [[r(o["x"]), r(o["y"]), o["text"], 0, 0, r(o.get("width", 0))] for o in sheet.ports]
+    recs["NLBL"] = [[r(o["x"]), r(o["y"]), o["text"]] for o in sheet.netlabels]
+    return recs
+
+
+def netlist(path, net=None, net_how="exact", has_designator=None, designator_how="list",
+            only_pins_of=None, single_pin_only=False):
+    """Nets of a saved .SchDoc, from the file - never Altium's cached compile.
+
+    Returns [{"name": str|None, "count": n, "pins": ["U1.3", ...]}], named nets
+    first. Filters mirror the 11 netlist scripts of the 2026-09-20 fixture day:
+    net name, nets containing a designator, only pins of given parts, and
+    single-pin nets (a label or pin that attached to nothing).
+    """
+    built = _netlist_builder()(sheet_records(Sheet(path)))
+    nets = [{"name": n, "pins": pins} for n, pins in sorted(built["named"].items())]
+    nets += [{"name": None, "pins": pins} for pins in built["anonymous"]]
+
+    def des_of(pin):
+        return pin.rsplit(".", 1)[0]
+
+    out = []
+    for n in nets:
+        if net is not None and not _match(n["name"] or "", net_how, net):
+            continue
+        if has_designator is not None and not any(
+                _match(des_of(p), designator_how, has_designator) for p in n["pins"]):
+            continue
+        if single_pin_only and len(n["pins"]) != 1:
+            continue
+        pins = n["pins"]
+        if only_pins_of is not None:
+            pins = [p for p in pins if _match(des_of(p), "list", only_pins_of)]
+        out.append({"name": n["name"], "count": len(n["pins"]), "pins": pins})
+    return out

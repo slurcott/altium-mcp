@@ -15,18 +15,9 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
 
 ## Open
 
-**B3. `sch_query` and `netlist_query`** (in progress, 2026-09-21, fixture scripts)
-- Evidence: the miner finds an 11-script netlist cluster and a component+pin query
-  cluster. Together that is 31 of 77 fixture scripts.
-- Done: `sch_query`, which reads a saved .SchDoc straight from the file
-  (`server/schdoc_file.py`: a dependency-free OLE reader plus the record parser). It
-  returns components, pins with hot ends, net labels, power ports, ports, wires and
-  junctions, with exact/list/prefix/contains filters, and never touches Altium.
-  Checked on the fixture sheet: the counts match the raw records exactly (107/373/207).
-  274 of 336 non-mirrored pin hot ends land on wiring, against 0 body ends, and all
-  207 net labels sit on a wire.
-- Next: `netlist_query`, which feeds `schdoc_file.Sheet` into `dev/netlist.py`'s
-  connectivity rules. Also still to do: SchLib pins (binary records) through Altium.
+**B3b. `sch_query` for SchLib symbols** (open, 2026-09-21)
+- SchLib pins are binary records, so a SchLib query goes through Altium (or a
+  binary pin decoder). SchDoc queries are done (D7).
 
 **B4. `sch_edit` and `sch_place`** (open, 2026-09-21, fixture scripts)
 - Evidence: the miner finds 8 edit/delete and 8 place/save scripts. `placepico`
@@ -101,3 +92,13 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   BeginModify/EndModify, which marks the document modified without changing its content. Proven
   2026-09-21 on scratch copies of all four kinds, from clean through dirty to saved, and live through
   the production bridge (431bf01).
+- **D7.** (B3) `sch_query` and `netlist_query` read a saved .SchDoc from the file, never Altium
+  (`server/schdoc_file.py`). The netlist reuses `dev/netlist.py`'s connectivity rules, so it is never the
+  cached `DM_Compile`. Checked on the fixture sheet:
+  - all 349 on-sheet pins are placed in nets
+  - 296 of 349 pin hot ends land on wiring
+  - the separated grounds (FE_SGND 9, TMC_SGND 20, PWR_RTN 37, LINK_GND 6) come out as distinct nets
+  - there is no stray GND net
+
+  Found on the way: symbols with alternate display modes store every mode's pins, at different
+  positions, so only the displayed mode's pins are kept (these had been 24 phantom pins).

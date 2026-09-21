@@ -383,12 +383,48 @@ class SchDocFileReader(unittest.TestCase):
             "|RECORD=2|OWNERINDEX=0|OWNERPARTID=2|DESIGNATOR=5|")
         self.assertEqual([p["designator"] for p in sh.components[0]["pins"]], ["5"])
 
+    def test_alternate_display_mode_pins_are_dropped(self):
+        # found on the fixture sheet: RES-2 stores both modes' pins, at different spots
+        sh = self._sheet(
+            "|RECORD=1|DISPLAYMODECOUNT=2|",
+            "|RECORD=2|OWNERINDEX=0|DESIGNATOR=1|LOCATION.X=10|",
+            "|RECORD=2|OWNERINDEX=0|OWNERPARTDISPLAYMODE=1|DESIGNATOR=1|LOCATION.X=99|")
+        pins = sh.components[0]["pins"]
+        self.assertEqual([(p["designator"], p["x"]) for p in pins], [("1", 100)])
+
     def test_query_filters(self):
         import schdoc_file
         sh = self._sheet("|RECORD=25|TEXT=ENC_A|", "|RECORD=25|TEXT=ENC_B|", "|RECORD=25|TEXT=GND|")
         with mock.patch.object(schdoc_file, "Sheet", return_value=sh):
             self.assertEqual(len(schdoc_file.query("x", "netlabel", "text", "prefix", "ENC_")), 2)
             self.assertEqual(len(schdoc_file.query("x", "netlabel", "text", "list", ["GND"])), 1)
+
+
+class SchDocNetlist(unittest.TestCase):
+    """netlist() on a synthetic sheet: two resistors, one wire, one label."""
+
+    def test_wire_joins_pins_and_label_names_the_net(self):
+        import schdoc_file
+        recs = [
+            "|HEADER=x|",
+            "|RECORD=1|LIBREFERENCE=RES|", "|RECORD=34|OWNERINDEX=0|TEXT=R1|",
+            "|RECORD=2|OWNERINDEX=0|DESIGNATOR=1|LOCATION.X=0|LOCATION.Y=0|PINLENGTH=10|PINCONGLOMERATE=0|",
+            "|RECORD=1|LIBREFERENCE=RES|", "|RECORD=34|OWNERINDEX=3|TEXT=R2|",
+            "|RECORD=2|OWNERINDEX=3|DESIGNATOR=1|LOCATION.X=50|LOCATION.Y=0|PINLENGTH=10|PINCONGLOMERATE=2|",
+            "|RECORD=2|OWNERINDEX=3|DESIGNATOR=2|LOCATION.X=90|LOCATION.Y=0|PINLENGTH=10|PINCONGLOMERATE=0|",
+            # wire from R1.1 hot end (100,0) to R2.1 hot end (400,0), label mid-wire
+            "|RECORD=27|LOCATIONCOUNT=2|X1=10|Y1=0|X2=40|Y2=0|",
+            "|RECORD=25|LOCATION.X=20|LOCATION.Y=0|TEXT=SIG|",
+        ]
+        data = SchDocFileReader._stream(*recs)
+        with mock.patch.object(schdoc_file, "read_ole_stream", return_value=data):
+            nets = schdoc_file.netlist("x.SchDoc")
+            sig = [n for n in nets if n["name"] == "SIG"]
+            self.assertEqual(sig[0]["pins"], ["R1.1", "R2.1"])
+            singles = schdoc_file.netlist("x.SchDoc", single_pin_only=True)
+            self.assertEqual([n["pins"] for n in singles], [["R2.2"]])
+            only = schdoc_file.netlist("x.SchDoc", has_designator="R2", only_pins_of="R2")
+            self.assertEqual(sorted(p for n in only for p in n["pins"]), ["R2.1", "R2.2"])
 
 
 class RunHistory(unittest.TestCase):

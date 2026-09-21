@@ -2674,6 +2674,49 @@ async def sch_query(ctx: Context, doc_path: str, kind: str = "component",
 
 
 @mcp.tool()
+async def netlist_query(ctx: Context, doc_path: str, net: str = None, net_how: str = "exact",
+                        has_designator: str = None, designator_how: str = "list",
+                        only_pins_of: str = None, single_pin_only: bool = False) -> str:
+    """
+    Nets of a SAVED schematic sheet (.SchDoc), built from the file - never from
+    Altium's compiler, whose DM_Compile can serve a CACHED netlist after edits.
+    Never touches Altium, so it cannot wedge anything.
+
+    Connectivity follows dev/netlist.py's rules: wire endpoints, junctions, pin
+    electrical ends (mirrored parts included), net labels, power ports and ports.
+    Same-named labels are one net. Single-sheet: ports/sheet entries to other
+    sheets are not followed.
+
+    Use it to check an edit landed (save_doc first), and to find faults: a
+    single-pin net with a name is a label that attached to nothing, or a net
+    name used exactly once - often a synonym for a net that already exists.
+
+    Args:
+        doc_path (str): full path to a .SchDoc.
+        net (str): filter on net name (with net_how exact | list | prefix | contains;
+            a list is comma-separated).
+        has_designator (str): keep only nets touching these parts, e.g. "U1,U2"
+            (designator_how list), or "K" with designator_how="prefix", or "?" with
+            designator_how="contains" for unannotated parts.
+        only_pins_of (str): within each net, list only these parts' pins ("U1,J2").
+        single_pin_only (bool): only nets with exactly one pin.
+
+    Returns:
+        str: JSON with nets: [{name (null = unnamed), count, pins: ["U1.3", ...]}].
+    """
+    import schdoc_file
+    if Path(doc_path).suffix.lower() != ".schdoc":
+        return json.dumps({"success": False, "error": "netlist_query reads .SchDoc files"})
+    try:
+        nets = schdoc_file.netlist(doc_path, net, net_how, has_designator, designator_how,
+                                   only_pins_of, single_pin_only)
+    except (OSError, ValueError, KeyError) as e:
+        return json.dumps({"success": False, "error": str(e)})
+    return json.dumps({"success": True, "source": "saved file", "net_count": len(nets),
+                       "nets": nets}, indent=1)
+
+
+@mcp.tool()
 async def save_doc(ctx: Context, doc_path: str) -> str:
     """
     Save one open Altium document by path, and confirm the file changed on disk.
