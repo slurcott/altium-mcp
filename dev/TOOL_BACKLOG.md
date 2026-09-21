@@ -87,4 +87,5 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
 - **D5.** (B1) All 12 production modals now return `ERROR:` instead. An unknown command answers at once
   rather than timing out after 120 s. A command whose document cannot be focused now fails with the
   reason, where before it silently ran against whatever was focused. A regression test forbids
-  `ShowMessage` in `server/AltiumScript` (pending: live check against Altium).
+  `ShowMessage` in `server/AltiumScript`. Verified live 2026-09-21: an unknown command failed cleanly
+  in 1.2 s with no dialog, and get_all_designators still round-trips (99dae94).
