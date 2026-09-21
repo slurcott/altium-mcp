@@ -191,11 +191,22 @@ The cool thing about layout duplication this way as opposed to with Altium's bui
 - `get_screenshot`: Take a screenshot of the Altium PCB window or Schematic Window that is the current view, returned as a proper image the agent can see. For PCB views, an optional `zoom_to` list of designators makes Altium zoom to those components before capture so they fill the frame. It should auto focus either document type if it is open but a different document type is focused.
 
 ### Scripting / Development
-- `run_altium_script`: Run a DelphiScript snippet in an **isolated sandbox script project** and get back a step-by-step log, the script's result, and - when a script dies - the exact statement that killed it. Altium has no headless test mode: a runtime error leaves the script paused in the debugger with no dialog, after which every later run silently does nothing until the debugger is stopped (Ctrl+F3) or Altium restarts. This tool detects that state and reports it. Because the sandbox is a separate script project, a crash can never break the other MCP tools. Useful for developing and verifying new Altium API code before building a tool around it.
+- `run_altium_script`: Run a DelphiScript snippet in an **isolated sandbox script project** and get back a step-by-step log, the script's result, and - when a script dies - the exact statement that killed it. Altium has no headless test mode: a runtime error leaves the script paused in the debugger with no dialog, after which every later run silently does nothing until the debugger is stopped (Ctrl+F3) or Altium restarts. This tool detects that state and reports it. Because the sandbox is a separate script project, a crash can never break the other MCP tools. Useful for developing and verifying new Altium API code before building a tool around it. Scripts may open with their own `var` block.
 - `ensure_altium_script_skill`: Check whether the [altium-script skill](https://github.com/coffeenmusic/altium-scripts-skill) (Altium DelphiScript API reference, examples, and conventions) is installed, and install it on request. Skills load at client startup, so a newly installed skill appears after a restart.
 
 ### Server Status
 - `get_server_status`: Check the status of the MCP server, including paths to Altium and script files
+- `altium_health`: Report whether it is safe to run anything against Altium - instance count, wedge marker, whether another session holds the lock, and any open Altium dialogs. Never launches Altium.
+
+### Run guards (`server/altium_guard.py`)
+Every tool launches `X2.EXE -R...`, and against an unhealthy Altium each launch makes things worse: a wedged or modal-blocked Altium does not receive the command, a *second* instance starts instead, and `-REditScript:Stop` frequently fails to clear a debugger pause. So before anything is launched:
+
+- **Preflight** - refuse when Altium is not running, when more than one instance is running (the signature of an earlier launch into a wedge), or when an earlier run left a wedge marker. The marker clears itself when Altium's PID changes, i.e. after a restart.
+- **Cross-session lock** - two MCP servers (two Claude sessions) driving one Altium collide in the script engine. A lock file in the exchange directory serialises them; a lock whose owner process has exited is taken over.
+- **Lint** (`run_altium_script` and `dev/run_sandbox.py`) - an undeclared identifier is a compile error that wedges the engine, and a guessed member name is a runtime pause that does the same. The linter refuses any bare name the sandbox does not declare, any `Client.` member no script has used, a short denylist of names known to wedge, and any member name absent from every `.pas` file in the repo. A new name that is genuinely real API goes in `allow_new_api`; once a run completes it is appended to `server/verified_api.txt`. It also warns on silent-logic traps: `.Location` on a replicated component (moves only the origin - use `MoveByXY`), `DM_Compile` used to confirm an edit (it can serve a cached netlist), and `ShowDocument` without a nil guard.
+- **Dialog dismissal is scoped to X2.EXE's windows.** Class filtering (`#32770`, `TMessageForm`) keeps Altium's main window safe, but `#32770` is every standard Windows dialog, so dismissal also requires the window to belong to Altium.
+
+Offline tests: `python -m unittest server/tests/test_altium_guard.py -v` (no Altium needed).
 
 ## How It Works
 

@@ -1,0 +1,278 @@
+"""Offline tests for altium_guard - none of these touch Altium.
+
+    python -m unittest server/tests/test_altium_guard.py -v
+
+Every lint case below is a script that wedged, or silently misbehaved in,
+a real Altium session.
+"""
+import json
+import os
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+SERVER = Path(__file__).resolve().parents[1]
+REPO = SERVER.parent
+sys.path.insert(0, str(SERVER))
+
+import altium_guard as g  # noqa: E402
+
+SANDBOX_SRC = (SERVER / "SandboxScript" / "Sandbox.pas").read_text(encoding="utf-8")
+CORPUS = g.Corpus.from_repo(REPO)
+
+
+def lint(body):
+    return g.lint_script(body, CORPUS, SANDBOX_SRC)
+
+
+class LintRefusesKnownWedges(unittest.TestCase):
+
+    def assertRefused(self, body, fragment):
+        r = lint(body)
+        self.assertTrue(any(fragment in e for e in r["errors"]),
+                        f"expected an error mentioning {fragment!r}, got {r['errors']}")
+
+    def test_undeclared_scratch_variable(self):
+        # 2026-09-20: B2 used as a Boolean flag; the sandbox only has B1.
+        self.assertRefused("B2 := 1;\nif B2 = 1 then ResultText := 'x';", "`b2`")
+
+    def test_client_document_count(self):
+        self.assertRefused("I1 := Client.DocumentCount;", "DocumentCount")
+
+    def test_client_close_document(self):
+        self.assertRefused("Client.CloseDocument(Obj1);", "CloseDocument")
+
+    def test_guessed_client_member(self):
+        self.assertRefused("Obj1 := Client.ActiveDocument;", "client.activedocument")
+
+    def test_layers_in_stack_count(self):
+        self.assertRefused("I1 := Obj1.LayersInStackCount;", "LayersInStackCount")
+
+    def test_add_filter_all_layers(self):
+        self.assertRefused("Obj2.AddFilter_AllLayers;", "AddFilter_AllLayers")
+
+    def test_guessed_member(self):
+        # 1c: a "does it exist?" guard written with unverified names
+        self.assertRefused("I1 := Obj1.ComponentCountXyz;", "componentcountxyz")
+
+    def test_dev_sandbox_variables_are_not_available(self):
+        # dev/*.pas use a larger scratch set than the server sandbox provides
+        self.assertRefused("I4 := 1;", "local variable in another script")
+        self.assertRefused("TargetDoc := nil;", "local variable in another script")
+
+    def test_production_helper_is_not_available(self):
+        # the sandbox is standalone: production-unit helpers do not exist there
+        self.assertRefused("S1 := TrimJSON(S2);", "trimjson")
+
+    def test_redeclaring_a_sandbox_variable(self):
+        self.assertRefused("var\n    S1 : String;\nS1 := 'a';", "already declared")
+
+    def test_redeclaring_a_run_local(self):
+        self.assertRefused("var\n    ResultText : String;\nResultText := 'a';", "already declared")
+
+
+class LintAcceptsRealScripts(unittest.TestCase):
+
+    def assertClean(self, body):
+        r = lint(body)
+        self.assertEqual(r["errors"], [], body)
+
+    def test_guarded_open(self):
+        self.assertClean(
+            "S1 := 'C:\\lib\\Parts.SchLib';\n"
+            "Obj5 := Client.GetDocumentByPath(S1);\n"
+            "if Obj5 = nil then Obj5 := Client.OpenDocument('SCHLIB', S1);\n"
+            "if Obj5 = nil then ResultText := 'could not open'\n"
+            "else begin\n"
+            "    Client.ShowDocument(Obj5);\n"
+            "    SandboxLog('open');\n"
+            "    ResultText := IntToStr(CoordToMils(MilsToCoord(5)));\n"
+            "end;")
+
+    def test_schlib_pin_survey(self):
+        # the body that was sitting in Sandbox.pas on 2026-09-21 - it ran
+        self.assertClean(
+            "Obj1 := SchServer.GetSchDocumentByPath(S1);\n"
+            "List1 := TStringList.Create;\n"
+            "Obj2 := Obj1.SchLibIterator_Create;\n"
+            "Obj2.AddFilter_ObjectSet(MkSet(eSchComponent));\n"
+            "Obj3 := Obj2.FirstSchObject;\n"
+            "while Obj3 <> nil do\n"
+            "begin\n"
+            "    List1.Add(Obj3.LibReference + ' X=' + IntToStr(CoordToMils(Obj3.Location.X)));\n"
+            "    Obj3 := Obj2.NextSchObject;\n"
+            "end;\n"
+            "Obj1.SchIterator_Destroy(Obj2);\n"
+            "ResultText := List1.Text;\n"
+            "List1.Free;")
+
+    def test_own_var_block(self):
+        r = lint("var\n    Count : Integer;\n    Done  : Boolean;\n"
+                 "Count := 3;\nDone := True;\nResultText := IntToStr(Count);")
+        self.assertEqual(r["errors"], [])
+        self.assertEqual(r["declared"], ["Count : Integer", "Done : Boolean"])
+
+    def test_comments_and_strings_are_ignored(self):
+        self.assertClean("{ Client.DocumentCount }\n// B2 := 1;\n"
+                         "ResultText := 'Client.DocumentCount B2';")
+
+
+class NewApi(unittest.TestCase):
+
+    BODY = "Obj1.SheetStyleXyz := 1;\nI1 := Obj1.SheetStyleXyz;"
+
+    def test_new_member_is_refused_once_per_name(self):
+        errs = lint(self.BODY)["errors"]
+        self.assertEqual(len(errs), 1, errs)
+        self.assertIn("allow_new_api", errs[0])
+
+    def test_allow_new_api_lets_a_deliberate_probe_through(self):
+        r = g.lint_script(self.BODY, CORPUS, SANDBOX_SRC, allow_new_api=["SheetStyleXyz"])
+        self.assertEqual(r["errors"], [])
+
+    def test_allow_never_overrides_the_denylist_or_client(self):
+        r = g.lint_script("I1 := Client.DocumentCount;\nObj1 := Client.ActiveDocument;",
+                          CORPUS, SANDBOX_SRC,
+                          allow_new_api=["DocumentCount", "ActiveDocument"])
+        self.assertEqual(len(r["errors"]), 2, r["errors"])
+
+    def test_completed_run_teaches_the_corpus(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            learned = Path(tmp) / "verified_api.txt"
+            c = g.Corpus.from_repo(REPO, verified_file=learned)
+            new = c.new_members(self.BODY)
+            self.assertEqual(new, ["sheetstylexyz"])
+            self.assertEqual(c.record_verified(new), ["sheetstylexyz"])
+            # a fresh corpus reads it back
+            c2 = g.Corpus.from_repo(REPO, verified_file=learned)
+            self.assertEqual(g.lint_script(self.BODY, c2, SANDBOX_SRC)["errors"], [])
+            self.assertEqual(c2.record_verified(new), [])     # no duplicates
+
+
+class LintWarnsOnSilentTraps(unittest.TestCase):
+
+    def assertWarned(self, body, fragment):
+        r = lint(body)
+        self.assertTrue(any(fragment in w for w in r["warnings"]), r["warnings"])
+
+    def test_location_on_replica(self):
+        self.assertWarned("Obj3 := Obj2.Replicate;\nObj3.Location := Point(0, 0);", "MoveByXY")
+
+    def test_move_by_xy_is_not_warned(self):
+        r = lint("Obj3 := Obj2.Replicate;\nObj3.MoveByXY(MilsToCoord(100), MilsToCoord(100));")
+        self.assertEqual(r["warnings"], [])
+
+    def test_dm_compile(self):
+        self.assertWarned("Obj1.DM_Compile;", "CACHED")
+
+    def test_unguarded_show_document(self):
+        self.assertWarned("Obj5 := Client.GetDocumentByPath(S1);\nClient.ShowDocument(Obj5);",
+                          "ShowDocument(nil)")
+
+
+class Injection(unittest.TestCase):
+
+    def test_body_lands_between_markers(self):
+        out = g.inject(SANDBOX_SRC, "ResultText := 'hello';")
+        exp = out.split(g.BEGIN_EXPERIMENT, 1)[1].split(g.END_EXPERIMENT, 1)[0]
+        self.assertIn("        ResultText := 'hello';", exp)
+        self.assertNotIn("sandbox idle", out)
+
+    def test_var_block_moves_into_run(self):
+        out = g.inject(SANDBOX_SRC, "var\n    Count : Integer;\nCount := 1;")
+        uv = out.split(g.BEGIN_USERVARS, 1)[1].split(g.END_USERVARS, 1)[0]
+        self.assertIn("Count : Integer;", uv)
+        exp = out.split(g.BEGIN_EXPERIMENT, 1)[1].split(g.END_EXPERIMENT, 1)[0]
+        self.assertNotIn("var", exp)
+        # user vars sit in Run's var section, i.e. before Run's begin
+        self.assertLess(out.index("Count : Integer;"), out.index("LogPath := "))
+
+    def test_reinjection_replaces_previous_vars(self):
+        once = g.inject(SANDBOX_SRC, "var\n    Count : Integer;\nCount := 1;")
+        twice = g.inject(once, "ResultText := 'x';")
+        self.assertNotIn("Count : Integer;", twice)
+        self.assertEqual(twice.count(g.BEGIN_USERVARS), 1)
+        self.assertEqual(twice.count(g.BEGIN_EXPERIMENT), 1)
+
+    def test_old_sandbox_without_markers_refuses_var_block(self):
+        old = SANDBOX_SRC.replace(g.BEGIN_USERVARS, "// x").replace(g.END_USERVARS, "// y")
+        with self.assertRaises(ValueError):
+            g.inject(old, "var\n    Count : Integer;\nCount := 1;")
+        g.inject(old, "ResultText := 'x';")     # plain bodies still work
+
+
+class Preflight(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.patch = mock.patch.object(g, "WEDGE_FILE", Path(self.tmp.name) / "WEDGED.json")
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        self.tmp.cleanup()
+
+    def test_not_running(self):
+        ok, msg = g.preflight(pids=[])
+        self.assertFalse(ok)
+        self.assertIn("not running", msg)
+
+    def test_extra_instance_refuses(self):
+        ok, msg = g.preflight(pids=[100, 200])
+        self.assertFalse(ok)
+        self.assertIn("2 Altium instances", msg)
+
+    def test_healthy(self):
+        self.assertTrue(g.preflight(pids=[100])[0])
+
+    def test_wedge_marker_refuses_same_instance(self):
+        g.mark_wedged("no log written", pids=[100])
+        ok, msg = g.preflight(pids=[100])
+        self.assertFalse(ok)
+        self.assertIn("WEDGED", msg)
+
+    def test_wedge_marker_clears_after_restart(self):
+        g.mark_wedged("no log written", pids=[100])
+        self.assertTrue(g.preflight(pids=[300])[0])
+        self.assertIsNone(g.read_wedge())
+
+
+class CrossSessionLock(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.patches = [mock.patch.object(g, "EXCHANGE_DIR", Path(self.tmp.name)),
+                        mock.patch.object(g, "BUSY_FILE", Path(self.tmp.name) / "busy.lock")]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.tmp.cleanup()
+
+    def test_second_holder_is_refused(self):
+        with g.altium_session("first"):
+            with self.assertRaises(g.AltiumBusy):
+                with g.altium_session("second"):
+                    pass
+        with g.altium_session("third"):     # released after the first
+            pass
+
+    def test_lock_of_dead_process_is_taken_over(self):
+        g.BUSY_FILE.write_text(json.dumps({"pid": 999999, "what": "x", "t": time.time()}))
+        with mock.patch.object(g, "_pid_alive", return_value=False):
+            with g.altium_session("new"):
+                self.assertEqual(json.loads(g.BUSY_FILE.read_text())["pid"], os.getpid())
+
+    def test_old_lock_is_taken_over(self):
+        g.BUSY_FILE.write_text(json.dumps({"pid": os.getpid(), "what": "x", "t": 0}))
+        with g.altium_session("new"):
+            pass
+
+
+if __name__ == "__main__":
+    unittest.main()

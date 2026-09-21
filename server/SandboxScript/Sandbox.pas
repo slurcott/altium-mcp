@@ -15,8 +15,9 @@ var
     LogLines : TStringList;
     LogPath  : String;
     OutPath  : String;
-    // Scratch variables: DelphiScript has no inline declarations, so scripts
-    // passed to the tool reuse these rather than declaring their own.
+    // Scratch variables: DelphiScript has no inline declarations. Scripts may
+    // reuse these, or open with their own `var` block, which run_altium_script
+    // moves into the USER VARS region of Run below.
     S1, S2, S3 : String;
     I1, I2, I3 : Integer;
     B1         : Integer;
@@ -35,6 +36,8 @@ procedure Run;
 var
     ResultText : String;
     OutLines   : TStringList;
+    // === BEGIN USER VARS (rewritten by the run_altium_script tool) ===
+    // === END USER VARS ===
 begin
     LogPath := 'C:\Users\Public\altium_mcp\sandbox_log.txt';
     OutPath := 'C:\Users\Public\altium_mcp\sandbox_result.json';
@@ -44,13 +47,7 @@ begin
 
     try
         // === BEGIN EXPERIMENT (rewritten by the run_altium_script tool) ===
-        SandboxLog('compile-check the exporter by loading it and calling a harmless entry point');
-        S1 := 'c:\Users\stephen.thompson\Documents\Claude Code\PCB_RL\exporter\Export_PCB_Data.pas';
-        SandboxLog('file exists: ' + BoolToStr(FileExists(S1), True));
-        SandboxLog('running ExportAllPCBsInFolderAuto via RunScriptFile');
-        Client.SendMessage('ScriptingSystem:RunScriptFile',
-            'FileName=' + S1 + '|ProcName=ExportAllPCBsInFolderAuto', 512, Client.CurrentView);
-        ResultText := 'dispatched';
+        ResultText := 'sandbox idle';
         // === END EXPERIMENT ===
     except
         SandboxLog('EXCEPTION escaped the script body');

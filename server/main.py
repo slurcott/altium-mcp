@@ -21,6 +21,8 @@ import base64
 import glob
 import re
 
+import altium_guard
+
 # Configure logging
 logging.basicConfig(
     level=logging.DEBUG,  # Change to DEBUG for more detailed logs
@@ -236,7 +238,16 @@ class AltiumBridge:
     async def execute_command(self, command: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a command in Altium via the bridge script"""
         async with self._command_lock:
-            return await self._execute_command_locked(command, params)
+            # Launching X2.EXE -R into a wedged Altium starts ANOTHER instance
+            # and makes the wedge worse, so refuse rather than launch.
+            ok, why = altium_guard.preflight()
+            if not ok:
+                return {"success": False, "error": f"refused to run '{command}': {why}"}
+            try:
+                with altium_guard.altium_session(command):
+                    return await self._execute_command_locked(command, params)
+            except altium_guard.AltiumBusy as e:
+                return {"success": False, "error": f"refused to run '{command}': {e}"}
 
     async def _execute_command_locked(self, command: str, params: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -267,7 +278,12 @@ class AltiumBridge:
             
             if not RESPONSE_FILE.exists():
                 logger.error("Timeout waiting for response from Altium")
-                return {"success": False, "error": "No response received from Altium (timeout)"}
+                altium_guard.mark_wedged(f"'{command}' got no response in {timeout} s")
+                return {"success": False,
+                        "error": "No response received from Altium (timeout). Altium is now "
+                                 "marked wedged and further runs will be refused until it is "
+                                 "restarted or altium_health(clear_wedge=True) is called - check "
+                                 "with a screenshot first, since a paused script is the usual cause."}
             
             # Read the response file and print it for debugging
             logger.info("Response file found, reading response")
@@ -1066,40 +1082,15 @@ def _dismiss_altium_dialogs():
     """Close Altium modal popups that would otherwise block a script run.
 
     Altium uses two kinds: Win32 task dialogs (#32770) and Delphi TMessageForm
-    error/warning boxes.
+    error/warning boxes. Only windows OWNED BY X2.EXE are touched - #32770 is
+    the class of every standard dialog on the machine, not just Altium's.
     """
-    try:
-        import ctypes
-        from ctypes import wintypes
-    except ImportError:
-        return 0
-    user32 = ctypes.windll.user32
-    found = []
-
-    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    def cb(hwnd, lparam):
-        if not user32.IsWindowVisible(hwnd):
-            return True
-        cls = ctypes.create_unicode_buffer(64)
-        user32.GetClassNameW(hwnd, cls, 64)
-        if cls.value == "#32770":
-            found.append(hwnd)
-        elif cls.value == "TMessageForm":
-            n = user32.GetWindowTextLengthW(hwnd)
-            buf = ctypes.create_unicode_buffer(n + 1)
-            user32.GetWindowTextW(hwnd, buf, n + 1)
-            if buf.value in ("Error", "Warning", "Information", "Confirm"):
-                found.append(hwnd)
-        return True
-
-    user32.EnumWindows(cb, 0)
-    for h in found:
-        user32.PostMessageW(h, 0x0010, 0, 0)
-    return len(found)
+    return len(altium_guard.dismiss_altium_dialogs())
 
 
 @mcp.tool()
-async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 120) -> str:
+async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 120,
+                            allow_new_api: list = None, lint: bool = True) -> str:
     """
     Run a DelphiScript snippet inside an isolated Altium sandbox and report
     what happened, step by step.
@@ -1118,9 +1109,29 @@ async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 12
     - Call SandboxLog('...') before each risky statement. The log is flushed
       after every call, so the last logged line identifies what failed.
     - Assign findings to the string variable ResultText - it is returned.
-    - DelphiScript has NO inline variable declarations. Reuse the provided
-      scratch variables: S1..S3 (String), I1..I3 and B1 (Integer),
-      Obj1..Obj5 (IDispatch), List1 (TStringList), IntMan, DbDoc.
+    - DelphiScript has NO inline variable declarations. Either reuse the
+      provided scratch variables - S1..S3 (String), I1..I3 and B1 (Integer),
+      Obj1..Obj5 (IDispatch), List1 (TStringList), IntMan, DbDoc - or open the
+      script with your own block, which is moved into the sandbox for you:
+          var
+              Count : Integer;
+              Comp  : ISch_Component;
+      No other names exist. The scratch set in dev/sandbox is LARGER; scripts
+      written for it (I4, Obj6, TargetDoc ...) will not compile here.
+
+    Before anything reaches Altium the script is linted. It is REFUSED if it
+    uses an undeclared name, a Client member no script has used, a name known
+    to wedge the engine, or a member name no script in this repo has used.
+    Those are all compile or runtime errors that pause the script engine and
+    wedge Altium until it is restarted. If a new member name is genuinely
+    real API, pass it in allow_new_api; once a run completes it is recorded in
+    server/verified_api.txt and accepted from then on. Warnings (e.g.
+    .Location on a replicated component, DM_Compile) do not block.
+
+    The run is also refused when Altium is not running, when more than one
+    instance is running, when an earlier run left it wedged, or while another
+    session is driving it - every one of those cases gets worse, not better,
+    by launching another script.
     - try/except does NOT catch runtime errors such as bad conversions or
       invalid API calls, so it cannot be relied on to keep a script alive.
     - The sandbox is standalone: helpers and constants from the production
@@ -1134,8 +1145,13 @@ async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 12
     skill is installed and can install it.
 
     Args:
-        script (str): DelphiScript statements to execute (body only).
+        script (str): DelphiScript statements to execute (body only), optionally
+            preceded by a `var` block.
         timeout_seconds (int): How long to wait for completion (default 120).
+        allow_new_api (list): member names you are deliberately probing that no
+            script has used yet. Probe new names in a short script of their own.
+        lint (bool): set False only to bypass the linter when it is wrong - and
+            say so, so the corpus can be fixed.
 
     Returns:
         str: JSON with success, the step log, the script's ResultText, and on
@@ -1148,36 +1164,50 @@ async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 12
         return json.dumps({"success": False,
                            "error": f"sandbox project missing at {SANDBOX_DIR}"})
 
+    src = SANDBOX_PAS.read_text(encoding="utf-8")
+    corpus = altium_guard.Corpus.from_repo(MCP_DIR.parent)
+    report = {"errors": [], "warnings": []}
+    if lint:
+        report = altium_guard.lint_script(script, corpus, src, allow_new_api or ())
+        if report["errors"]:
+            return json.dumps({
+                "success": False,
+                "error": "script refused by the linter - nothing was sent to Altium",
+                "lint_errors": report["errors"],
+                "lint_warnings": report["warnings"]}, indent=2)
+
+    ok, why = altium_guard.preflight()
+    if not ok:
+        return json.dumps({"success": False, "error": f"refused to run: {why}",
+                           "lint_warnings": report["warnings"]}, indent=2)
+
     try:
-        src = SANDBOX_PAS.read_text(encoding="utf-8")
-        pre, rest = src.split(SANDBOX_BEGIN, 1)
-        marker_line, rest = rest.split("\n", 1)
-        _, post = rest.split(SANDBOX_END, 1)
-        body = "\n".join("        " + ln if ln.strip() else ln
-                          for ln in script.strip("\n").splitlines())
-        SANDBOX_PAS.write_text(
-            pre + SANDBOX_BEGIN + marker_line + "\n" + body + "\n        " + SANDBOX_END + post,
-            encoding="utf-8")
+        injected = altium_guard.inject(src, script)
     except Exception as e:
         return json.dumps({"success": False, "error": f"could not inject script: {e}"})
 
-    for f in (SANDBOX_LOG, SANDBOX_RESULT):
-        if f.exists():
-            try:
-                f.unlink()
-            except OSError:
-                pass
+    try:
+        with altium_guard.altium_session("run_altium_script"):
+            SANDBOX_PAS.write_text(injected, encoding="utf-8")
+            for f in (SANDBOX_LOG, SANDBOX_RESULT):
+                if f.exists():
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
 
-    cmd = (f'"{altium_bridge.config.altium_exe_path}" -RScriptingSystem:RunScript('
-           f'ProjectName="{SANDBOX_PRJ}"^|ProcName="Sandbox>Run")')
-    subprocess.Popen(cmd, shell=True)
+            cmd = (f'"{altium_bridge.config.altium_exe_path}" -RScriptingSystem:RunScript('
+                   f'ProjectName="{SANDBOX_PRJ}"^|ProcName="Sandbox>Run")')
+            subprocess.Popen(cmd, shell=True)
 
-    start = time.time()
-    dialogs = 0
-    while not SANDBOX_RESULT.exists() and time.time() - start < timeout_seconds:
-        await asyncio.sleep(0.5)
-        if time.time() - start > 6:
-            dialogs += _dismiss_altium_dialogs()
+            start = time.time()
+            dialogs = []
+            while not SANDBOX_RESULT.exists() and time.time() - start < timeout_seconds:
+                await asyncio.sleep(0.5)
+                if time.time() - start > 6:
+                    dialogs += altium_guard.dismiss_altium_dialogs()
+    except altium_guard.AltiumBusy as e:
+        return json.dumps({"success": False, "error": f"refused to run: {e}"})
 
     steps = []
     if SANDBOX_LOG.exists():
@@ -1185,32 +1215,73 @@ async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 12
 
     if SANDBOX_RESULT.exists():
         result_text = SANDBOX_RESULT.read_text(encoding="utf-8", errors="replace").strip()
-        return json.dumps({"success": True, "result": result_text, "steps": steps,
-                           "dialogs_dismissed": dialogs}, indent=2)
+        learned = corpus.record_verified(corpus.new_members(script)) if lint else []
+        out = {"success": True, "result": result_text, "steps": steps,
+               "dialogs_dismissed": dialogs}
+        if report["warnings"]:
+            out["lint_warnings"] = report["warnings"]
+        if learned:
+            out["api_recorded_as_verified"] = learned
+        return json.dumps(out, indent=2)
+
+    recovery = ("Do NOT simply retry - each launch against a paused executor can start another "
+                "Altium instance. -REditScript:Stop is unreliable while the debugger is paused, "
+                "and a graceful close is refused. The dependable recovery is a force-restart, "
+                "safe only if your last write was verified on disk:\n" + altium_guard.RESTART_HINT +
+                "\nIf wedges happen on every run, look for a stray breakpoint in Sandbox.pas "
+                "(breakpoints are stored in user preferences, not the project).")
 
     if steps:
+        altium_guard.mark_wedged(f"sandbox script died after step: {steps[-1]}")
         return json.dumps({
             "success": False,
             "error": "script started but did not finish",
             "last_step_reached": steps[-1],
-            "diagnosis": "The statement AFTER the last step is what crashed or paused the script.",
+            "diagnosis": "The statement AFTER the last step is what crashed or paused the "
+                         "script. The executor is almost certainly paused in the debugger.",
             "executor_wedged": True,
-            "recovery": "Altium's script executor is now blocked. Recover by running this "
-                        "shell command (sends the debugger Stop process to the running "
-                        "Altium): \"<altium_exe>\" -REditScript:Stop  -- then retry.",
+            "recovery": recovery,
             "steps": steps,
             "dialogs_dismissed": dialogs}, indent=2)
 
+    altium_guard.mark_wedged("sandbox script wrote no log at all")
     return json.dumps({
         "success": False,
-        "error": "script never started",
-        "diagnosis": "Usually a COMPILE error in the script, or a previously paused "
-                     "script blocking execution.",
+        "error": "no log written - the script never reached its first statement",
+        "diagnosis": "Either a COMPILE error the linter did not catch, or the executor was "
+                     "already paused by an earlier script (a stray breakpoint does this on "
+                     "every run).",
         "executor_wedged": True,
-        "recovery": "A previously paused script may be blocking execution. Recover by "
-                    "running this shell command: \"<altium_exe>\" -REditScript:Stop  "
-                    "-- then retry. If it still fails, the script itself has a COMPILE error.",
+        "recovery": recovery,
         "dialogs_dismissed": dialogs}, indent=2)
+
+
+@mcp.tool()
+async def altium_health(ctx: Context, clear_wedge: bool = False) -> str:
+    """
+    Report whether it is safe to run anything against Altium. Never launches
+    Altium or a script - it only reads the process table, the wedge marker,
+    the cross-session lock and Altium's open dialogs.
+
+    Call this first when a tool was refused, or before a session of edits.
+
+    Args:
+        clear_wedge (bool): clear the wedge marker. Only do this once you have
+            confirmed (e.g. with a screenshot) that Altium is actually healthy -
+            the marker also clears itself when Altium is restarted.
+    """
+    cleared = altium_guard.clear_wedge() if clear_wedge else False
+    pids = altium_guard.altium_pids()
+    ok, why = altium_guard.preflight(pids)
+    busy = altium_guard.altium_session._holder()
+    return json.dumps({
+        "safe_to_run": ok and busy is None,
+        "verdict": why if busy is None else f"busy: another session holds the lock ({busy})",
+        "altium_pids": pids,
+        "wedge_marker": altium_guard.read_wedge(),
+        "wedge_cleared": cleared,
+        "open_altium_dialogs": [t for _, _, t in altium_guard.find_altium_dialogs(pids)],
+    }, indent=2)
 
 
 @mcp.tool()
