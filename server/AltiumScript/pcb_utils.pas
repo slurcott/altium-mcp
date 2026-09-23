@@ -2617,3 +2617,160 @@ begin
         PlacedArray.Free;
     end;
 end;
+
+// Coord -> mils from the board origin, as text for a dump line
+function RelMils(C: TCoord; Origin: TCoord): String;
+begin
+    Result := FloatToStr(CoordToMils(C - Origin));
+end;
+
+// Net name of a primitive, or '' when it has none
+function PrimNetName(Prim: IPCB_Primitive): String;
+begin
+    Result := '';
+    if Prim.Net <> nil then
+        Result := Prim.Net.Name;
+end;
+
+// pcb_query: one pipe-delimited line per board object, parsed and filtered in
+// Python (server/altium_dump.py). Uses only member names already proven by
+// get_footprint_primitives and get_net_connections. Spec (written by Python):
+//   PATH|<.PcbDoc path, or empty for the focused board>
+//   KINDS|TRK,ARC,PAD,VIA,FIL,REG,PLY,TXT,CMP,CON   (the tags to emit)
+// Output file: BOARD|ox|oy|path, then e.g. TRK|layer|net|x1|y1|x2|y2|w.
+// Coordinates are mils relative to the board origin.
+function PcbQueryFromSpec(SpecPath: String; OutPath: String): String;
+var
+    Spec      : TStringList;
+    OutLines  : TStringList;
+    DocPath   : String;
+    Kinds     : String;
+    ServerDoc : IServerDocument;
+    Board     : IPCB_Board;
+    Iter      : IPCB_BoardIterator;
+    Prim      : IPCB_Primitive;
+    Rect      : TCoordRect;
+    OX        : TCoord;
+    OY        : TCoord;
+    Count     : Integer;
+    Bad       : Integer;
+begin
+    Result := '';
+    DocPath := '';
+    Kinds := '';
+    Spec := TStringList.Create;
+    try
+        Spec.LoadFromFile(SpecPath);
+        if Spec.Count >= 2 then
+        begin
+            DocPath := Trim(GetFieldFromPipeString(Spec[0], 1));
+            Kinds := ',' + UpperCase(Trim(GetFieldFromPipeString(Spec[1], 1))) + ',';
+        end;
+    finally
+        Spec.Free;
+    end;
+
+    if DocPath <> '' then
+    begin
+        ServerDoc := Client.GetDocumentByPath(DocPath);
+        if ServerDoc = nil then
+            ServerDoc := Client.OpenDocument('PCB', DocPath);
+        if ServerDoc = nil then
+        begin
+            Result := 'ERROR: could not open ' + DocPath;
+            Exit;
+        end;
+        Client.ShowDocument(ServerDoc);
+    end;
+
+    Board := GetBoardSafe(0);
+    if Board = nil then
+    begin
+        Result := 'ERROR: no PCB document is focused - pass doc_path';
+        Exit;
+    end;
+    // Never answer from a different board than the one asked for
+    if (DocPath <> '') and (UpperCase(Board.FileName) <> UpperCase(DocPath)) then
+    begin
+        Result := 'ERROR: asked for ' + DocPath + ' but the focused board is ' + Board.FileName;
+        Exit;
+    end;
+
+    OX := Board.XOrigin;
+    OY := Board.YOrigin;
+    Count := 0;
+    Bad := 0;
+    OutLines := TStringList.Create;
+    try
+        OutLines.Add('BOARD|' + FloatToStr(CoordToMils(OX)) + '|' + FloatToStr(CoordToMils(OY)) + '|' + Board.FileName);
+        Iter := Board.BoardIterator_Create;
+        Iter.AddFilter_ObjectSet(MkSet(eTrackObject, eArcObject, ePadObject, eViaObject, eFillObject,
+                                       eRegionObject, ePolyObject, eTextObject, eComponentObject,
+                                       eConnectionObject));
+        Iter.AddFilter_LayerSet(AllLayers);
+        Iter.AddFilter_Method(eProcessAll);
+        Prim := Iter.FirstPCBObject;
+        while Prim <> nil do
+        begin
+          try
+            if (Prim.ObjectId = eTrackObject) and (Pos(',TRK,', Kinds) > 0) then
+                OutLines.Add('TRK|' + Layer2String(Prim.Layer) + '|' + PrimNetName(Prim) + '|' +
+                    RelMils(Prim.x1, OX) + '|' + RelMils(Prim.y1, OY) + '|' +
+                    RelMils(Prim.x2, OX) + '|' + RelMils(Prim.y2, OY) + '|' +
+                    FloatToStr(CoordToMils(Prim.Width)))
+            else if (Prim.ObjectId = eArcObject) and (Pos(',ARC,', Kinds) > 0) then
+                OutLines.Add('ARC|' + Layer2String(Prim.Layer) + '|' + PrimNetName(Prim) + '|' +
+                    RelMils(Prim.XCenter, OX) + '|' + RelMils(Prim.YCenter, OY) + '|' +
+                    FloatToStr(CoordToMils(Prim.Radius)) + '|' + FloatToStr(Prim.StartAngle) + '|' +
+                    FloatToStr(Prim.EndAngle) + '|' + FloatToStr(CoordToMils(Prim.LineWidth)))
+            else if (Prim.ObjectId = ePadObject) and (Pos(',PAD,', Kinds) > 0) then
+                OutLines.Add('PAD|' + Layer2String(Prim.Layer) + '|' + PrimNetName(Prim) + '|' +
+                    Prim.Name + '|' + RelMils(Prim.x, OX) + '|' + RelMils(Prim.y, OY) + '|' +
+                    FloatToStr(CoordToMils(Prim.TopXSize)) + '|' + FloatToStr(CoordToMils(Prim.TopYSize)) + '|' +
+                    FloatToStr(CoordToMils(Prim.HoleSize)))
+            else if (Prim.ObjectId = eViaObject) and (Pos(',VIA,', Kinds) > 0) then
+                OutLines.Add('VIA|' + PrimNetName(Prim) + '|' +
+                    RelMils(Prim.x, OX) + '|' + RelMils(Prim.y, OY) + '|' +
+                    FloatToStr(CoordToMils(Prim.Size)) + '|' + FloatToStr(CoordToMils(Prim.HoleSize)) + '|' +
+                    Layer2String(Prim.LowLayer) + '|' + Layer2String(Prim.HighLayer))
+            else if (Prim.ObjectId = eFillObject) and (Pos(',FIL,', Kinds) > 0) then
+                OutLines.Add('FIL|' + Layer2String(Prim.Layer) + '|' + PrimNetName(Prim) + '|' +
+                    RelMils(Prim.x1Location, OX) + '|' + RelMils(Prim.y1Location, OY) + '|' +
+                    RelMils(Prim.x2Location, OX) + '|' + RelMils(Prim.y2Location, OY))
+            else if (Prim.ObjectId = eRegionObject) and (Pos(',REG,', Kinds) > 0) then
+            begin
+                Rect := Prim.BoundingRectangle;
+                OutLines.Add('REG|' + Layer2String(Prim.Layer) + '|' + PrimNetName(Prim) + '|' +
+                    IntToStr(Prim.Kind) + '|' +
+                    RelMils(Rect.Left, OX) + '|' + RelMils(Rect.Bottom, OY) + '|' +
+                    RelMils(Rect.Right, OX) + '|' + RelMils(Rect.Top, OY));
+            end
+            else if (Prim.ObjectId = ePolyObject) and (Pos(',PLY,', Kinds) > 0) then
+            begin
+                Rect := Prim.BoundingRectangle;
+                OutLines.Add('PLY|' + Layer2String(Prim.Layer) + '|' + PrimNetName(Prim) + '|' +
+                    RelMils(Rect.Left, OX) + '|' + RelMils(Rect.Bottom, OY) + '|' +
+                    RelMils(Rect.Right, OX) + '|' + RelMils(Rect.Top, OY));
+            end
+            else if (Prim.ObjectId = eTextObject) and (Pos(',TXT,', Kinds) > 0) then
+                OutLines.Add('TXT|' + Layer2String(Prim.Layer) + '|' +
+                    RelMils(Prim.XLocation, OX) + '|' + RelMils(Prim.YLocation, OY) + '|' + Prim.Text)
+            else if (Prim.ObjectId = eComponentObject) and (Pos(',CMP,', Kinds) > 0) then
+                OutLines.Add('CMP|' + Layer2String(Prim.Layer) + '|' + Prim.Name.Text + '|' +
+                    RelMils(Prim.x, OX) + '|' + RelMils(Prim.y, OY) + '|' + FloatToStr(Prim.Rotation))
+            else if (Prim.ObjectId = eConnectionObject) and (Pos(',CON,', Kinds) > 0) then
+                OutLines.Add('CON|' + PrimNetName(Prim));
+            Count := Count + 1;
+          except
+            Bad := Bad + 1;
+            OutLines.Add('BAD|' + IntToStr(Prim.ObjectId));
+          end;
+            Prim := Iter.NextPCBObject;
+        end;
+        Board.BoardIterator_Destroy(Iter);
+        OutLines.SaveToFile(OutPath);
+    finally
+        OutLines.Free;
+    end;
+    Result := '{"scanned": ' + IntToStr(Count) + ', "unreadable": ' + IntToStr(Bad) + '}';
+end;

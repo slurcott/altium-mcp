@@ -2676,11 +2676,18 @@ async def sch_query(ctx: Context, doc_path: str, kind: str = "component",
 @mcp.tool()
 async def netlist_query(ctx: Context, doc_path: str, net: str = None, net_how: str = "exact",
                         has_designator: str = None, designator_how: str = "list",
-                        only_pins_of: str = None, single_pin_only: bool = False) -> str:
+                        only_pins_of: str = None, single_pin_only: bool = False,
+                        include_violations: bool = True) -> str:
     """
     Nets of a SAVED schematic sheet (.SchDoc), built from the file - never from
     Altium's compiler, whose DM_Compile can serve a CACHED netlist after edits.
     Never touches Altium, so it cannot wedge anything.
+
+    Pass a .PrjPcb instead for the whole multi-sheet PROJECT: Altium compiles it
+    and returns the flattened netlist plus the ERC violations (source
+    "compiled"). The project must be open in Altium. Use that source to FIND
+    faults across sheets; do not use it to confirm an edit landed - the
+    compiler can report the pre-edit netlist (GOTCHAS 3e).
 
     Connectivity follows dev/netlist.py's rules: wire endpoints, junctions, pin
     electrical ends (mirrored parts included), net labels, power ports and ports.
@@ -2700,13 +2707,20 @@ async def netlist_query(ctx: Context, doc_path: str, net: str = None, net_how: s
             designator_how="contains" for unannotated parts.
         only_pins_of (str): within each net, list only these parts' pins ("U1,J2").
         single_pin_only (bool): only nets with exactly one pin.
+        include_violations (bool): .PrjPcb only - include the ERC violation list.
 
     Returns:
-        str: JSON with nets: [{name (null = unnamed), count, pins: ["U1.3", ...]}].
+        str: JSON with nets: [{name (null = unnamed), count, pins: ["U1.3", ...]}];
+        for a project also project, component_count and violations.
     """
     import schdoc_file
-    if Path(doc_path).suffix.lower() != ".schdoc":
-        return json.dumps({"success": False, "error": "netlist_query reads .SchDoc files"})
+    suffix = Path(doc_path).suffix.lower()
+    if suffix == ".prjpcb":
+        return await _compiled_netlist(doc_path, net, net_how, has_designator, designator_how,
+                                       only_pins_of, single_pin_only, include_violations)
+    if suffix != ".schdoc":
+        return json.dumps({"success": False,
+                           "error": "netlist_query reads a .SchDoc file or compiles a .PrjPcb"})
     try:
         nets = schdoc_file.netlist(doc_path, net, net_how, has_designator, designator_how,
                                    only_pins_of, single_pin_only)
@@ -2714,6 +2728,128 @@ async def netlist_query(ctx: Context, doc_path: str, net: str = None, net_how: s
         return json.dumps({"success": False, "error": str(e)})
     return json.dumps({"success": True, "source": "saved file", "net_count": len(nets),
                        "nets": nets}, indent=1)
+
+
+def _read_bridge_json(response):
+    result = response.get("result", {})
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except ValueError:
+            result = {"raw": result}
+    return result
+
+
+def _read_dump(path):
+    # TStringList.SaveToFile writes ANSI
+    return path.read_text(encoding="cp1252", errors="replace")
+
+
+async def _compiled_netlist(prj_path, net, net_how, has_designator, designator_how,
+                            only_pins_of, single_pin_only, include_violations):
+    import schdoc_file
+    import altium_dump
+    path = os.path.abspath(prj_path).replace("/", "\\")
+    if not os.path.isfile(path):
+        return json.dumps({"success": False, "error": f"no such file: {path}"})
+    spec = EXCHANGE_DIR / "compiled_netlist_spec.txt"
+    out = EXCHANGE_DIR / "compiled_netlist_out.txt"
+    spec.write_text(f"PATH|{path}\n", encoding="cp1252", errors="replace")
+    if out.exists():
+        out.unlink()
+    response = await altium_bridge.execute_command("compiled_netlist", {})
+    if not response.get("success", False):
+        return json.dumps({"success": False, "error": response.get("error", "unknown error")})
+    if not out.exists():
+        return json.dumps({"success": False, "error": "Altium reported success but wrote no netlist"})
+    counts = _read_bridge_json(response)
+    project, nets, violations = altium_dump.parse_compiled_netlist(_read_dump(out))
+    nets = schdoc_file.filter_nets(nets, net, net_how, has_designator, designator_how,
+                                   only_pins_of, single_pin_only)
+    reply = {"success": True,
+             "source": "compiled (DM_Compile - may be CACHED; find faults with it, "
+                       "confirm edits with the saved sheet)",
+             "project": project, "component_count": counts.get("components"),
+             "net_count": len(nets), "nets": nets}
+    if include_violations:
+        reply["violation_count"] = len(violations)
+        reply["violations"] = violations
+    return json.dumps(reply, indent=1)
+
+
+@mcp.tool()
+async def pcb_query(ctx: Context, doc_path: str = "", kinds: str = "track,arc,pad,via",
+                    layers: str = None, net: str = None, net_how: str = "exact",
+                    window: list = None, summary: bool = False, max_items: int = 500) -> str:
+    """
+    List the objects on a PCB, filtered - instead of hand-writing a board
+    iterator in run_altium_script. Read-only.
+
+    Coordinates are mils RELATIVE TO THE BOARD ORIGIN (what the Altium status
+    bar shows), for every kind. Includes component-owned pads, silkscreen and
+    text as well as free objects.
+
+    Args:
+        doc_path (str): .PcbDoc to query (opened and focused if needed). Empty =
+            the focused board. With a path, it refuses to answer from a
+            different board.
+        kinds (str): comma list of track, arc, pad, via, fill, region, polygon,
+            text, component, connection ("all" for every kind). A connection is
+            an airline - an unrouted pad-to-pad link - and carries only its net.
+        layers (str): comma list of Altium layer names, e.g. "Top Layer,Mid Layer 1"
+            (a via matches either of its span layers).
+        net (str): net filter with net_how exact | list | prefix | contains.
+        window (list): [x1, y1, x2, y2] mils from origin; keeps objects whose
+            bounding box touches it (point objects: their location).
+        summary (bool): instead of objects, return counts per kind and layer,
+            the nets present on each copper layer, and airlines per net - the
+            board-audit numbers (is Mid Layer 1 clean? what is still unrouted?).
+        max_items (int): cap on returned objects; the total is always reported.
+
+    Returns:
+        str: JSON with board, origin, total, returned, objects (or summary).
+    """
+    import altium_dump
+    wanted = [k.strip().lower() for k in (kinds or "").split(",") if k.strip()]
+    if wanted == ["all"]:
+        wanted = list(altium_dump.PCB_KINDS)
+    unknown = [k for k in wanted if k not in altium_dump.PCB_KINDS]
+    if unknown or not wanted:
+        return json.dumps({"success": False,
+                           "error": f"unknown kinds {unknown}; use {', '.join(altium_dump.PCB_KINDS)} or all"})
+    if window is not None and len(window) != 4:
+        return json.dumps({"success": False, "error": "window is [x1, y1, x2, y2] in mils"})
+    path = ""
+    if doc_path:
+        path = os.path.abspath(doc_path).replace("/", "\\")
+        if Path(path).suffix.lower() != ".pcbdoc" or not os.path.isfile(path):
+            return json.dumps({"success": False, "error": f"not a .PcbDoc file: {path}"})
+
+    spec = EXCHANGE_DIR / "pcb_query_spec.txt"
+    out = EXCHANGE_DIR / "pcb_query_out.txt"
+    tags = ",".join(altium_dump.PCB_KINDS[k] for k in wanted)
+    spec.write_text(f"PATH|{path}\nKINDS|{tags}\n", encoding="cp1252", errors="replace")
+    if out.exists():
+        out.unlink()
+    response = await altium_bridge.execute_command("pcb_query", {})
+    if not response.get("success", False):
+        return json.dumps({"success": False, "error": response.get("error", "unknown error")})
+    if not out.exists():
+        return json.dumps({"success": False, "error": "Altium reported success but wrote no dump"})
+
+    counts = _read_bridge_json(response)
+    header, objects = altium_dump.parse_pcb_dump(_read_dump(out))
+    objects = altium_dump.filter_pcb(objects, layers, net, net_how,
+                                     tuple(float(v) for v in window) if window else None)
+    reply = {"success": True, "board": header.get("file"),
+             "origin_mils": [header.get("origin_x"), header.get("origin_y")],
+             "unreadable": counts.get("unreadable", 0), "total": len(objects)}
+    if summary:
+        reply["summary"] = altium_dump.summarise_pcb(objects)
+    else:
+        reply["returned"] = min(len(objects), max_items)
+        reply["objects"] = objects[:max_items]
+    return json.dumps(reply, indent=1)
 
 
 @mcp.tool()

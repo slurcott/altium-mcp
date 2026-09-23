@@ -290,7 +290,15 @@ def netlist(path, net=None, net_how="exact", has_designator=None, designator_how
     built = _netlist_builder()(sheet_records(Sheet(path)))
     nets = [{"name": n, "pins": pins} for n, pins in sorted(built["named"].items())]
     nets += [{"name": None, "pins": pins} for pins in built["anonymous"]]
+    return filter_nets(nets, net, net_how, has_designator, designator_how,
+                       only_pins_of, single_pin_only)
 
+
+def filter_nets(nets, net=None, net_how="exact", has_designator=None, designator_how="list",
+                only_pins_of=None, single_pin_only=False):
+    """The netlist_query filters, shared by the saved-file and compiled sources.
+
+    `nets` is [{"name": str|None, "pins": ["U1.3", ...]}]."""
     def des_of(pin):
         return pin.rsplit(".", 1)[0]
 

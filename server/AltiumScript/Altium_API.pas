@@ -1105,6 +1105,10 @@ begin
             Result := ExecuteCreatePCBFootprint(RequestData);
         'save_doc':
             Result := SaveDocumentFromSpec(ROOT_DIR + 'save_doc_spec.txt');
+        'pcb_query':
+            Result := PcbQueryFromSpec(ROOT_DIR + 'pcb_query_spec.txt', ROOT_DIR + 'pcb_query_out.txt');
+        'compiled_netlist':
+            Result := CompiledNetlistFromSpec(ROOT_DIR + 'compiled_netlist_spec.txt', ROOT_DIR + 'compiled_netlist_out.txt');
     else
         Result := 'ERROR: Unknown command: ' + CommandName;
     end;

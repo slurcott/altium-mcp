@@ -135,7 +135,9 @@ begin
        (CommandName = 'get_footprint_primitives') or
        (CommandName = 'create_footprints_batch') or
        (CommandName = 'create_pcb_footprint') or
-       (CommandName = 'save_doc') then
+       (CommandName = 'save_doc')                 or
+       (CommandName = 'pcb_query')                or
+       (CommandName = 'compiled_netlist') then
     begin
         Result := '';
         Exit;
@@ -942,5 +944,81 @@ begin
                 Exit;
             end;
         end;
+    end;
+end;
+
+// netlist_query on a project: compile it and dump the flattened netlist and
+// the ERC violations, one line each, parsed in Python (server/altium_dump.py).
+// DM_Compile can serve a CACHED netlist after edits (GOTCHAS 3e), so Python
+// labels this source as possibly stale. The project must already be open -
+// opening a project from a script has side effects this command should not have.
+// Spec: PATH|<.PrjPcb path>. Output: PRJ|path, then N|net, P|des|pin..., V|text.
+function CompiledNetlistFromSpec(SpecPath: String; OutPath: String): String;
+var
+    Spec      : TStringList;
+    OutLines  : TStringList;
+    PrjPath   : String;
+    Project   : IProject;
+    Flat      : IDispatch;
+    Net       : IDispatch;
+    Pin       : IDispatch;
+    I         : Integer;
+    J         : Integer;
+begin
+    Result := '';
+    PrjPath := '';
+    Spec := TStringList.Create;
+    try
+        Spec.LoadFromFile(SpecPath);
+        if Spec.Count >= 1 then
+            PrjPath := Trim(GetFieldFromPipeString(Spec[0], 1));
+    finally
+        Spec.Free;
+    end;
+    if PrjPath = '' then
+    begin
+        Result := 'ERROR: compiled netlist spec has no project path';
+        Exit;
+    end;
+
+    Project := nil;
+    for I := 0 to GetWorkspace.DM_ProjectCount - 1 do
+        if UpperCase(GetWorkspace.DM_Projects(I).DM_ProjectFullPath) = UpperCase(PrjPath) then
+            Project := GetWorkspace.DM_Projects(I);
+    if Project = nil then
+    begin
+        Result := 'ERROR: project is not open in Altium: ' + PrjPath;
+        Exit;
+    end;
+
+    Project.DM_Compile;
+    Flat := Project.DM_DocumentFlattened;
+    if Flat = nil then
+    begin
+        Result := 'ERROR: compile produced no flattened document for ' + PrjPath;
+        Exit;
+    end;
+
+    OutLines := TStringList.Create;
+    try
+        OutLines.Add('PRJ|' + Project.DM_ProjectFullPath);
+        for I := 0 to Flat.DM_NetCount - 1 do
+        begin
+            Net := Flat.DM_Nets(I);
+            OutLines.Add('N|' + Net.DM_NetName);
+            for J := 0 to Net.DM_PinCount - 1 do
+            begin
+                Pin := Net.DM_Pins(J);
+                OutLines.Add('P|' + Pin.DM_LogicalPartDesignator + '|' + Pin.DM_PinNumber);
+            end;
+        end;
+        for I := 0 to Project.DM_ViolationCount - 1 do
+            OutLines.Add('V|' + Project.DM_Violations(I).DM_LongDescriptorString);
+        OutLines.SaveToFile(OutPath);
+        Result := '{"nets": ' + IntToStr(Flat.DM_NetCount) + ', "components": ' +
+                  IntToStr(Flat.DM_ComponentCount) + ', "violations": ' +
+                  IntToStr(Project.DM_ViolationCount) + '}';
+    finally
+        OutLines.Free;
     end;
 end;
