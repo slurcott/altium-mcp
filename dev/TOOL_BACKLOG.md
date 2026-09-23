@@ -100,6 +100,17 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   summary on the FE board should match the 09-22 run (2292 tracks; Mid1 133, Mid2 170).
   Airlines carry the net only - `X1..Y2` on a connection is unproven, so not read.
 
+**B14. BOM consolidation + part-number decoding** (in progress, 2026-09-23, user request)
+- Evidence: generic library picks leave one requirement bought under several MPNs
+  (OV4F B_1: 54 passive MPNs for 44 requirements) and BOM names that contradict
+  the MPN actually bought (X7R name / X5R part; "1%" name / 5% part).
+- Built (tool-dev, offline-tested): `server/passives.py` decodes 12 R/MLCC series;
+  `dev/bom_consolidate.py` reads Altium BOM .xlsx (+ saved sheets for parts newer
+  than the export), groups by type/package/value, recommends upgrade-only merges,
+  specs a new part when none covers, flags name-vs-MPN mismatches.
+- Next: DigiKey API lookup to fill specs/alternates; expose as an MCP tool;
+  CM substitution checker using the same `covers()` rule; `sch_edit` (B4) to apply swaps.
+
 ## Done
 
 - **D1.** Preflight, cross-session lock, wedge marker, and `altium_health` (74452d8).
