@@ -58,27 +58,63 @@ def load_bom(path, board):
     return lines
 
 
-def load_sheets(paths, board, known):
-    """Components on saved .SchDoc sheets that the BOM export does not list
-    (added since the export). Their part number comes from the MPN parameter,
-    else the Comment. Repeated (multi-channel) sheets count once - the BOM
-    export is the source of quantities."""
+_SPEC_KEYS = ("value", "resistance", "capacitance", "case-eia", "case/package", "case code (imperial)",
+              "tolerance", "voltage rating", "voltage", "dielectric", "power", "power rating", "ratings")
+
+
+def _sheet_parts(paths):
     import schdoc_file
-    lines = []
     for path in paths:
         for c in schdoc_file.query(path, "component", include_pins=False):
-            d = c["designator"]
-            # a repeated (multi-channel) sheet's C3 appears in the BOM as C3_HBU, C3_HBV...
-            if d in known or d.endswith("?") or any(k.startswith(d + "_") for k in known):
+            if c["designator"].endswith("?"):
                 continue
             prm = {k.lower(): v for k, v in (c.get("parameters") or {}).items()}
-            mpn = prm.get("manufacturer part number") or prm.get("part number") or c.get("comment") or ""
-            lines.append({"board": board, "name": c.get("comment") or "",
-                          "description": c.get("description") or "", "designators": [d],
-                          "quantity": 1, "manufacturer": prm.get("manufacturer", ""),
-                          "mpn": mpn.strip(), "supplier": "", "spn": "", "unit_price": None,
-                          "lifecycle": "", "from_sheet": Path(path).name})
-    return lines
+            specs = " ".join(f"{prm[k]}" for k in _SPEC_KEYS if prm.get(k))
+            yield c, prm, specs, Path(path).name
+
+
+def reconcile(bom_lines, paths, board):
+    """The saved sheets decide WHAT is placed; the BOM export only supplies
+    part number / supplier data for a part it already knew by the same name.
+
+    Returns (lines, changes). A designator whose part differs from the export
+    (or that the export never had) is marked changed; export designators no
+    longer on any sheet are reported as removed. A repeated (multi-channel)
+    sheet's C3 matches the export's C3_HBU, C3_HBV, ..."""
+    by_des = {d: ln for ln in bom_lines for d in ln["designators"]}
+    by_name = {}
+    for ln in bom_lines:
+        for k in (ln["name"], ln["mpn"]):
+            if k:
+                by_name.setdefault(k.upper(), ln)
+    lines, changes, seen = [], [], set()
+    for c, prm, specs, sheet in _sheet_parts(paths):
+        d = c["designator"]
+        comment = (c.get("comment") or "").strip()
+        sheet_mpn = (prm.get("manufacturer part number") or prm.get("part number") or comment).strip()
+        exp = [x for x in by_des if x == d or x.startswith(d + "_")]
+        seen.update(exp)
+        old = by_des[exp[0]] if exp else None
+        same = old is not None and {comment.upper(), sheet_mpn.upper()} & {old["name"].upper(), old["mpn"].upper()}
+        src = old if same else by_name.get(comment.upper()) or by_name.get(sheet_mpn.upper())
+        des = exp if (exp and same) else ([d] if not exp else exp)
+        ln = {"board": board, "designators": des, "quantity": len(des), "from_sheet": sheet,
+              "name": comment, "description": f'{c.get("description") or ""} {specs}'.strip()}
+        if src:
+            ln.update({k: src[k] for k in ("manufacturer", "mpn", "supplier", "spn", "unit_price", "lifecycle")})
+            ln["description"] = f'{ln["description"]} {src["description"]}'.strip()
+        else:
+            ln.update({"manufacturer": prm.get("manufacturer", ""), "mpn": sheet_mpn, "supplier": "",
+                       "spn": "", "unit_price": None, "lifecycle": ""})
+        if not same:
+            changes.append({"board": board, "designator": d, "was": old["mpn"] if old else None,
+                            "now": ln["mpn"], "sheet": sheet})
+        ln["changed_since_export"] = not same
+        lines.append(ln)
+    for d, ln in sorted(by_des.items()):
+        if d not in seen:
+            changes.append({"board": board, "designator": d, "was": ln["mpn"], "now": None, "sheet": None})
+    return lines, changes
 
 
 def attributes(line):
@@ -180,16 +216,17 @@ def consolidate(lines, prefer_supplier="DigiKey", resistor_std_tol=None, bulk_ca
                                      "flags": []})
         rec["uses"].append({"board": ln["board"], "designators": ln["designators"],
                             "quantity": ln["quantity"], "name": ln["name"],
-                            "not_in_bom_export": bool(ln.get("from_sheet"))})
+                            "changed_since_export": bool(ln.get("changed_since_export"))})
         if rec["unit_price"] is None:
             rec["unit_price"] = ln["unit_price"]
         if ln["supplier"]:
             rec["suppliers"].add(ln["supplier"])
-        for mm in mismatches(a, text):
+        new_flags = mismatches(a, text)
+        if a["type"] == "R" and a["value"] == 0 and "jumper" not in (a.get("series") or ""):
+            new_flags.append("0 ohm jumper - check this is intended")
+        for mm in new_flags:
             if mm not in rec["flags"]:
                 rec["flags"].append(mm)
-        if a["type"] == "R" and a["value"] == 0:
-            rec["flags"].append("0 ohm jumper - check this is intended")
 
     groups = {}
     for rec in parts.values():
@@ -248,8 +285,11 @@ def apply_resistor_standard(g, members, std_tol):
     need_power = max([m["attrs"]["power"] for m in members if m["attrs"].get("power")] or [0])
     cand = P.rmcf_1pct(a["package"], a["value"]) if std_tol >= 1 else None
     cand_power = P.decode_mpn(cand)["power"] if cand else None
-    if cand and cand_power is not None and cand_power + 1e-9 < need_power:
-        cand = None
+    if cand is None or (cand_power is not None and cand_power + 1e-9 < need_power):
+        # outside the standard series (size or power): a special, chosen for its rating
+        g["status"] = "special" if g["status"] == "single" else g["status"]
+        g["reason"] = (g["reason"] + "; " if g["reason"] else "") +             "outside the standard resistor series (size or power) - left as a special"
+        return
     g["status"] = "to-standard"
     g["recommend"] = cand
     g["reason"] = (f"library standard is {std_tol:g} %: replace {final} with a {std_tol:g} % AEC-Q200 part"
@@ -281,7 +321,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--bom", action="append", required=True, help="LABEL=path.xlsx")
     ap.add_argument("--sheets", action="append", default=[],
-                    help="LABEL=a.SchDoc;b.SchDoc - add parts missing from that board's BOM export")
+                    help="LABEL=a.SchDoc;b.SchDoc - the saved sheets decide what is placed on that "
+                         "board; its BOM export only supplies part-number/supplier data")
     ap.add_argument("--prefer-supplier", default="DigiKey")
     ap.add_argument("--resistor-standard", type=float, metavar="PCT",
                     help="library tolerance for general resistors, e.g. 1")
@@ -293,11 +334,16 @@ def main(argv=None):
     for spec in args.bom:
         label, _, path = spec.partition("=")
         lines += load_bom(path, label)
+    changes = []
     for spec in args.sheets:
         label, _, paths = spec.partition("=")
-        known = {d for ln in lines if ln["board"] == label for d in ln["designators"]}
-        lines += load_sheets([p for p in paths.split(";") if p], label, known)
+        board_lines = [ln for ln in lines if ln["board"] == label]
+        lines = [ln for ln in lines if ln["board"] != label]
+        rec, ch = reconcile(board_lines, [p for p in paths.split(";") if p], label)
+        lines += rec
+        changes += ch
     res = consolidate(lines, args.prefer_supplier, args.resistor_standard, args.bulk_cap_min)
+    res["changed_since_export"] = changes
     if args.json:
         Path(args.json).write_text(json.dumps(res, indent=1, default=list), encoding="utf-8")
     for g in res["groups"]:

@@ -114,10 +114,26 @@ def _taiyo(m):   # UMK316B7105KLHT, UMK212BB7225KG-T, UMR325AC7106KM-P
                 series="Taiyo Yuden")
 
 
-def _yageo_r(m):  # RC0603FR-131KL, AC0603JR-0720KL, RC0402JR-100RL
-    # The two digits after the dash are the reel code (07/10/13); the value follows.
-    return _res(m[2], si(m[5]), _RES_TOL.get(m[3]), aec=m[1] == "AC",
-                series="Yageo " + m[1])
+_YAGEO_POWER = {"0201": 0.05, "0402": 0.0625, "0603": 0.1, "0805": 0.125, "1206": 0.25}
+
+
+def _yageo_r(m):  # RC0603FR-131KL, AC0603JR-0720KL, RC0402JR-100RL, AC0603FR-7W10KL
+    # After the dash: reel code (07/10/13), or 7W/10W/13W = the double-power
+    # version on that reel; the value follows.
+    power = _YAGEO_POWER.get(m[2])
+    if power and m[4].endswith("W"):
+        power *= 2
+    return _res(m[2], si(m[5]), _RES_TOL.get(m[3]), power=power, aec=m[1] == "AC",
+                series="Yageo " + m[1] + (" double power" if m[4].endswith("W") else ""))
+
+
+def _stackpole_hcj(m):  # HCJ0805ZT0R00 - high-current jumper
+    return _res(m[1], 0.0, None, aec=True, series="Stackpole HCJ jumper")
+
+
+def _stackpole_rncp(m):  # RNCP0603FTD2K49 - anti-sulfur thin film
+    return _res(m[1], si(m[3]), _RES_TOL.get(m[2]), power=_RMCF_POWER.get(m[1]), tech="thin",
+                aec=True, series="Stackpole RNCP")
 
 
 _RMCF_POWER = {"0201": 0.05, "0402": 0.0625, "0603": 0.1, "0805": 0.125, "1206": 0.25}
@@ -178,7 +194,9 @@ _DECODERS = [
     (re.compile(r"^(GRM|GCM|GCJ)(\d\d)(\w)(R7|Z7|C7|C8|R6|5C|L8|R9)(\w\w)(\d{3})([B-MZ])"), _murata),
     (re.compile(r"^(CGA|C|CGJ)(\d{4}|\d)\w?\d?(X7R|X5R|X7S|X6S|NP0|C0G)(\d\w)(\d{3})([B-MZ])"), _tdk),
     (re.compile(r"^([AJLETGUHQ])M[KRJ](105|107|212|316|325|432)[A-Z]?(B7|C7|BJ|C6|CG)(\d{3})([B-MZ])"), _taiyo),
-    (re.compile(r"^(RC|AC)(0201|0402|0603|0805|1206)([A-JW])R-(07|10|13)(\w+?)L$"), _yageo_r),
+    (re.compile(r"^(RC|AC)(0201|0402|0603|0805|1206)([A-JW])R-(07W?|10W?|13W?|7W)(\w+?)L$"), _yageo_r),
+    (re.compile(r"^HCJ(0402|0603|0805|1206)ZT0R00$"), _stackpole_hcj),
+    (re.compile(r"^RNCP(0402|0603|0805|1206)([BCDF])T[A-Z]?(\w+)$"), _stackpole_rncp),
     (re.compile(r"^RMCF(0201|0402|0603|0805|1206)([FGJ])[GT](\w+)$"), _stackpole),
     (re.compile(r"^CRCW(0402|0603|0805|1206)(\w+?)([FGJ])\w{3}$"), _vishay),
     (re.compile(r"^(CRGCQ|CRGP|CRG|CPF)(0402|0603|0805|1206)([FJ])(\w+?)(C1)?$"), _te_crg),

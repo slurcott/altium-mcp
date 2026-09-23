@@ -181,12 +181,49 @@ class LibraryPolicies(unittest.TestCase):
         self.assertTrue(all(g["status"] == "single" for g in res["groups"]))
 
     def test_resistor_standard_respects_power(self):
-        # 0.33 W part: RMCF0805 is only 0.125 W, so no series candidate is offered
+        # 0.33 W part: RMCF0805 is only 0.125 W, so it stays a special
         res = B.consolidate([line("F", "R26", "CRGCQ0805J47R", desc="47 ohm 0.33W 5% 0805")],
                             resistor_std_tol=1)
         g = group(res, "0805", "47R")
-        self.assertEqual(g["status"], "to-standard")
+        self.assertEqual(g["status"], "special")       # chosen for its rating - left alone
         self.assertIsNone(g["recommend"])
+
+
+class SheetsAreTheTruth(unittest.TestCase):
+    """Regression: a BOM export older than the sheets must not decide what is
+    placed (OV4F FE R21 was 47 ohm in the export, a 0 ohm jumper on the sheet)."""
+
+    def run_reconcile(self, bom, comps):
+        from unittest import mock
+        fake = [({"designator": d, "comment": cm, "description": ""}, {}, "", "s.SchDoc") for d, cm in comps]
+        with mock.patch.object(B, "_sheet_parts", return_value=fake):
+            return B.reconcile(bom, ["s.SchDoc"], "FE")
+
+    def test_changed_part_comes_from_the_sheet(self):
+        bom = [dict(line("FE", "R21", "CRGCQ0805J47R", name="CRGCQ0805J47R"))]
+        lines, changes = self.run_reconcile(bom, [("R21", "HCJ0805ZT0R00")])
+        self.assertEqual(lines[0]["mpn"], "HCJ0805ZT0R00")
+        self.assertEqual(changes, [{"board": "FE", "designator": "R21", "was": "CRGCQ0805J47R",
+                                    "now": "HCJ0805ZT0R00", "sheet": "s.SchDoc"}])
+
+    def test_unchanged_generic_name_keeps_export_part_number(self):
+        bom = [line("FE", "R11,R12", "CRCW060333K0JNEC", name="33K 5% 0603(1608)")]
+        lines, changes = self.run_reconcile(bom, [("R11", "33K 5% 0603(1608)"), ("R12", "33K 5% 0603(1608)")])
+        self.assertEqual({ln["mpn"] for ln in lines}, {"CRCW060333K0JNEC"})
+        self.assertEqual(changes, [])
+
+    def test_removed_and_multichannel(self):
+        bom = [line("FE", "R9", "RMCF0603JG120R"), line("FE", "C3_HBU,C3_HBV,C3_HBW", "C0402H102J5GACT500")]
+        lines, changes = self.run_reconcile(bom, [("C3", "C0402H102J5GACT500")])
+        self.assertEqual(lines[0]["designators"], ["C3_HBU", "C3_HBV", "C3_HBW"])
+        self.assertEqual([(c["designator"], c["now"]) for c in changes], [("R9", None)])
+
+    def test_new_decoders(self):
+        d = dec("AC0603FR-7W10KL")          # Yageo double-power on 7" reel
+        self.assertEqual((d["value"], d["tolerance"], d["power"], d["aec"]), (10e3, 1, 0.2, True))
+        self.assertEqual(dec("HCJ0805ZT0R00")["value"], 0.0)
+        d = dec("RNCP0603FTD2K49")
+        self.assertEqual((d["value"], d["tolerance"], d["tech"]), (2490.0, 1, "thin"))
 
 
 if __name__ == "__main__":
