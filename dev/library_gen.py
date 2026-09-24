@@ -67,16 +67,15 @@ RMCF = {"0402": (0.0625, 50, 0.40), "0603": (0.1, 75, 0.55), "0805": (0.125, 150
         "1206": (0.25, 200, 0.70)}
 JUMPER_AMPS = {"0402": 1, "0603": 1, "0805": 2, "1206": 2}
 
-# Workspace naming (seen on CMP-009-00064-1): RESC0402(1005)_L, _L = least density.
-# Only RESC0402(1005)_L is confirmed to exist; the rest follow the same pattern -
-# check they exist in the workspace before import.
-RES_FOOTPRINT = {p: f"RESC{p}({m})_L" for p, m in
-                 (("0402", "1005"), ("0603", "1608"), ("0805", "2012"), ("1206", "3216"))}
-CAP_FOOTPRINT = {p: f"CAPC{p}({m})_L" for p, m in
-                 (("0402", "1005"), ("0603", "1608"), ("0805", "2012"), ("1206", "3216"),
-                  ("1210", "3225"))}
+# Standard footprints: IPC-7351 NOMINAL density (Steve 2026-09-24), the generic
+# workspace footprints already placed on the OV4F B_1 boards. None = not built
+# yet (0805 R, 1206 C) - those rows are held back until the footprint exists.
+RES_FOOTPRINT = {"0402": "RESC1005X40X25NL05T10", "0603": "RESC0603(1608)_N", "0805": None,
+                 "1206": None}
+CAP_FOOTPRINT = {"0402": "CAPC1005X56X25NL10T15", "0603": "CAPC1608X90X35NL15T15",
+                 "0805": "CAPC0805(2012)145_N", "1206": None, "1210": "CAPC1210(3225)280_N"}
 RES_SYMBOL = "SYM-004-0030-1"      # workspace generic resistor (confirmed)
-CAP_SYMBOL = "Capacitor"           # TODO: workspace generic capacitor symbol ID
+CAP_SYMBOL = "SYM-006-0000-2"      # workspace generic non-polarised capacitor (confirmed)
 
 
 def fmt_watts(w):
@@ -176,21 +175,21 @@ def resistor_rows(package):
             "tolerance": "1%", "power": fmt_watts(power), "voltage": f"{volts}V", "dielectric": "",
             "mount": "SMT", "pins": "2", "tmin": "-55°C", "tmax": "155°C",
             "tcr": tcr(v), "ratings": "AEC-Q200", "symbol": RES_SYMBOL,
-            "footprint": RES_FOOTPRINT[package],
+            "footprint": fp_status(RES_FOOTPRINT[package])[0],
             "mfr1": "Stackpole Electronics", "mpn1": mpns[0],
             "mfr2": "YAGEO", "mpn2": mpns[1], "mfr3": "Vishay Dale", "mpn3": mpns[2],
-            "status": "STANDARD", "verified": "series rule; sample confirmed",
+            "status": fp_status(RES_FOOTPRINT[package])[1], "verified": "series rule; sample confirmed",
         })
     rows.append({
         "name": f"RES {package} 0Ω jumper", "description":
             f"0Ω jumper {package} {JUMPER_AMPS[package]}A thick film AEC-Q200",
         "comment": "0Ω", "value": "0Ω", "package": package, "metric": METRIC[package],
         "tolerance": "jumper", "power": "", "voltage": "", "dielectric": "", "tcr": "",
-        "ratings": "AEC-Q200", "symbol": RES_SYMBOL, "footprint": RES_FOOTPRINT[package],
+        "ratings": "AEC-Q200", "symbol": RES_SYMBOL, "footprint": fp_status(RES_FOOTPRINT[package])[0],
         "mount": "SMT", "pins": "2",
         "mfr1": "Stackpole Electronics", "mpn1": P.rmcf_jumper(package),
         "mfr2": "", "mpn2": "", "mfr3": "", "mpn3": "",
-        "status": "STANDARD", "verified": "distributor",
+        "status": fp_status(RES_FOOTPRINT[package])[1], "verified": "distributor",
     })
     return rows
 
@@ -212,9 +211,9 @@ def capacitor_rows():
             "tmin": "-55°C", "tmax": {"X5R": "85°C", "X6S": "105°C", "X7S": "125°C"}.get(diel, "125°C"),
             "power": "", "voltage": f"{volts:g}V", "dielectric": diel, "tcr": "",
             "ratings": "AEC-Q200" if d["aec"] else "", "symbol": CAP_SYMBOL,
-            "footprint": CAP_FOOTPRINT[pkg], "mfr1": mfr, "mpn1": mpn,
+            "footprint": fp_status(CAP_FOOTPRINT[pkg])[0], "mfr1": mfr, "mpn1": mpn,
             "mfr2": alt[0] if alt else "", "mpn2": alt[1] if alt else "", "mfr3": "", "mpn3": "",
-            "status": "STANDARD", "verified": where, "note": CAP_NOTES.get(mpn, ""),
+            "status": fp_status(CAP_FOOTPRINT[pkg])[1], "verified": where, "note": CAP_NOTES.get(mpn, ""),
         })
     return rows
 
@@ -229,11 +228,18 @@ def placeholder_rows():
                                "library yet; set Value (and Voltage/Dielectric for caps)",
                 "comment": "=Value", "value": "", "package": pkg, "metric": METRIC[pkg],
                 "tolerance": "", "power": "", "voltage": "", "dielectric": "", "tcr": "",
-                "ratings": "", "symbol": sym, "footprint": fps[pkg], "mount": "SMT", "pins": "2",
+                "ratings": "", "symbol": sym, "footprint": fp_status(fps[pkg])[0], "mount": "SMT", "pins": "2",
                 "mfr1": "", "mpn1": "", "mfr2": "", "mpn2": "", "mfr3": "", "mpn3": "",
-                "status": "PLACEHOLDER", "verified": "",
+                "status": "PLACEHOLDER" if fps[pkg] else HOLD, "verified": "",
             })
     return rows
+
+
+HOLD = "HOLD - footprint not built yet"
+
+
+def fp_status(fp):
+    return (fp or "", "STANDARD" if fp else HOLD)
 
 
 def write_csv(path, rows):
