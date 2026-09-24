@@ -2853,6 +2853,51 @@ async def pcb_query(ctx: Context, doc_path: str = "", kinds: str = "track,arc,pa
 
 
 @mcp.tool()
+async def build_passive_schlib(ctx: Context, template_schlib: str, out_schlib: str,
+                               footprint: str, rows: list) -> str:
+    """
+    Build an import-ready SchLib of standard passives - one component per row -
+    for Altium 365's Library Importer. Proven on 145 0402 resistors (2026-09-24).
+
+    Workflow this completes: (1) download the workspace symbol (e.g. RES-2) as a
+    .SchLib and the footprint as a .PcbLib (Explorer: right-click > Edit > Save As,
+    or Operations > Download); (2) call this; (3) File > Import Library, "+ Library"
+    both the built SchLib AND the PcbLib, Validate (expect only "same geometry" and
+    "duplicated by Part Choices" warnings), Import. Result: every component with
+    Part Choices, sharing ONE symbol and ONE footprint.
+
+    Args:
+        template_schlib (str): .SchLib holding exactly one symbol to copy.
+        out_schlib (str): new .SchLib to create (must not exist).
+        footprint (str): footprint name every component links to, e.g. "RESC0402(1005)_L".
+        rows (list): [{"name", "description", "comment", "params": {name: value}}].
+            Put part choices in params as "Manufacturer n" / "Manufacturer Part Number n";
+            the importer maps those pairs to Part Choices by default.
+
+    Returns:
+        str: JSON with the sandbox result, the save result and an offline verify
+        (components present, footprint links, missing/unexpected names).
+    """
+    import passive_schlib as PS
+    try:
+        lines = [PS.spec_line(r["name"], r.get("description", ""), r.get("comment", ""),
+                              list((r.get("params") or {}).items())) for r in rows]
+        out = PS.prepare(template_schlib, out_schlib)
+        PS.write_spec(lines)
+        script = PS.render_script(str(out).replace("/", "\\"), footprint)
+    except (OSError, ValueError, KeyError) as e:
+        return json.dumps({"success": False, "error": str(e)})
+    run = json.loads(await run_altium_script(ctx, script=script, timeout_seconds=600))
+    if not run.get("success"):
+        return json.dumps({"success": False, "stage": "script", "run": run}, indent=1)
+    saved = json.loads(await save_doc(ctx, str(out)))
+    check = PS.verify(out, [r["name"] for r in rows], footprint)
+    return json.dumps({"success": bool(saved.get("success") and check["ok"]),
+                       "schlib": str(out), "script": run.get("result"), "save": saved,
+                       "verify": check}, indent=1)
+
+
+@mcp.tool()
 async def save_doc(ctx: Context, doc_path: str) -> str:
     """
     Save one open Altium document by path, and confirm the file changed on disk.

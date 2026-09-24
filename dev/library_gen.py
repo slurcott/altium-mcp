@@ -300,7 +300,7 @@ TSV_SEP, TSV_EOL = chr(9), chr(10)
 # Library parts already created in the workspace - never batch them again.
 ALREADY_IN_WORKSPACE = {"RES 0603 12kΩ 1%"}         # CMP-009-00177, 2026-09-24 (TMC R20)
 # Whole batches already released to the workspace - skipped entirely.
-BATCHES_DONE = {"0603"}                              # 2026-09-24: 144 via batch-grid paste
+BATCHES_DONE = {"0603", "0402"}   # 0603: batch-grid paste; 0402: SchLib + Library Importer (2026-09-24)
 RES_FOLDER = "Components" + chr(92) + "Resistors"
 
 

@@ -127,3 +127,7 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
 - **D9.** (B13) `pcb_query` (7f5b4a5). Verified live 2026-09-23 on the FE board: 3355 objects,
   0 unreadable, 217 vias, 5 airlines; a window around U8 returned U8 at (-1098.7, 5.0) mil rot 90
   with its pads - matching the hand-scripted placement check.
+- **D10.** `build_passive_schlib`: standard passives -> import-ready SchLib -> Library Importer
+  (server/passive_schlib.py, offline tests). Proven live 2026-09-24: 145 0402 resistors
+  imported with Part Choices, 1 shared symbol + 1 footprint. Full workflow and the routes
+  that do NOT work (DbLib, batch grid limits): dev/LIBRARY_IMPORT.md.
