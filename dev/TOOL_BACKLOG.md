@@ -75,31 +75,6 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
 - Fix: post it. Mention that the class-only dialog filter also matches other
   applications' dialogs (fixed on `tool-hardening`).
 
-**B12. Compiled project netlist + ERC violations** (needs Altium, 2026-09-23, run archive)
-- Evidence: the miner's 5-script cluster on 09-21/22 (B_1 design review): each
-  hand-wrote `DM_Compile -> DM_DocumentFlattened -> DM_Nets/DM_Pins + DM_Violations`
-  for a multi-sheet .PrjPcb. `netlist_query` is single-sheet (file-backed), so it
-  could not answer. Also refused once by the linter before `allow_new_api`.
-- Fix (built on `tool-dev`, offline-tested): `netlist_query` accepts a `.PrjPcb` ->
-  bridge command `compiled_netlist` (`CompiledNetlistFromSpec`, other_utils.pas),
-  same filters via `schdoc_file.filter_nets`, plus `violations`. Labelled
-  `source: compiled (may be CACHED)` per GOTCHAS 3e. Refuses a project that is not
-  open rather than opening it. **Live check needed:** one run on the FE B_1 project
-  should reproduce the 67 nets / 114 components the hand scripts saw.
-
-**B13. `pcb_query`: board objects without a hand-written iterator** (needs Altium, 2026-09-23, run archive)
-- Evidence: 4 scripts on 09-22/23 walked `BoardIterator_Create` for tracks per
-  mid layer + nets on them, polygons, airlines (`eConnectionObject`), and an
-  origin-relative primitive dump (U8 placement check). Same skeleton each time.
-- Fix (built on `tool-dev`, offline-tested): `pcb_query(doc_path, kinds, layers,
-  net, window, summary, max_items)`. Pascal `PcbQueryFromSpec` (pcb_utils.pas)
-  dumps one line per object using only member names proven by
-  `get_footprint_primitives`; filtering, windowing and the summary (counts per
-  kind x layer, nets per layer, airlines per net) are Python (`server/altium_dump.py`).
-  Refuses to answer from a different board than `doc_path`. **Live check needed:**
-  summary on the FE board should match the 09-22 run (2292 tracks; Mid1 133, Mid2 170).
-  Airlines carry the net only - `X1..Y2` on a connection is unproven, so not read.
-
 **B14. BOM consolidation + part-number decoding** (in progress, 2026-09-23, user request)
 - Evidence: generic library picks leave one requirement bought under several MPNs
   (OV4F B_1: 54 passive MPNs for 44 requirements) and BOM names that contradict
@@ -110,6 +85,14 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   specs a new part when none covers, flags name-vs-MPN mismatches.
 - Next: DigiKey API lookup to fill specs/alternates; expose as an MCP tool;
   CM substitution checker using the same `covers()` rule; `sch_edit` (B4) to apply swaps.
+
+**B15. ERC violations come back as category names only** (open, 2026-09-23, live run)
+- Evidence: first live `netlist_query` on a .PrjPcb returned 13 violations as
+  "Nets with no driving source", "Nets with possible connection problems"... -
+  `DM_LongDescriptorString` is the violation CLASS, not which net/pin.
+- Fix: find the per-violation detail member (probe with `allow_new_api` in the
+  sandbox: e.g. `DM_DescriptorString`, `DM_ErrorLevel`, the violating object) and
+  emit net/designator per violation.
 
 ## Done
 
@@ -138,3 +121,9 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
 
   Found on the way: symbols with alternate display modes store every mode's pins, at different
   positions, so only the displayed mode's pins are kept (these had been 24 phantom pins).
+- **D8.** (B12) `netlist_query` on a .PrjPcb: compiled multi-sheet netlist + ERC violations
+  (7f5b4a5). Verified live 2026-09-23 on FE B_1: 65 nets / 113 components in 3 s, matching the
+  113 components the file reader counts on the saved sheets.
+- **D9.** (B13) `pcb_query` (7f5b4a5). Verified live 2026-09-23 on the FE board: 3355 objects,
+  0 unreadable, 217 vias, 5 airlines; a window around U8 returned U8 at (-1098.7, 5.0) mil rot 90
+  with its pads - matching the hand-scripted placement check.
