@@ -65,8 +65,12 @@ _RES_TOL = {"A": 0.05, "B": 0.1, "C": 0.25, "D": 0.5, "F": 1, "G": 2, "J": 5, "W
 def _kemet(m):   # C0603C105K4RACTU, C0805X104J5RACTU, C0402H102J5GACT500, ...AUTO
     v = {"9": 6.3, "8": 10, "4": 16, "3": 25, "6": 35, "5": 50, "1": 100, "2": 200, "A": 250}
     d = {"R": "X7R", "G": "C0G", "P": "X5R", "U": "Z5U", "V": "Y5V"}
-    return _cap(m[1], code3(m[2]), v.get(m[4]), d.get(m[5]), _CAP_TOL.get(m[3]),
-                aec=m[0].endswith("AUTO"), series="KEMET C")
+    c = _cap(m[1], code3(m[2]), v.get(m[4]), d.get(m[5]), _CAP_TOL.get(m[3]),
+             aec=m[0].endswith("AUTO"), series="KEMET C")
+    if m[0][5] == "X":                  # C0805X...: flexible termination (FT-CAP)
+        c["flex"] = True
+        c["series"] = "KEMET FT-CAP flexible termination"
+    return c
 
 
 def _avx(m):     # 06035C104KAZ2A, 12066C226KAT2A, 18121C104KAT2A
@@ -87,7 +91,7 @@ _MURATA_SIZE = {"03": "0201", "15": "0402", "18": "0603", "21": "0805", "31": "1
 _MURATA_DIEL = {"R7": "X7R", "Z7": "X7R", "C7": "X7S", "C8": "X6S", "R6": "X5R",
                 "5C": "C0G", "L8": "X8L", "R9": "X8R"}
 _V2 = {"0J": 6.3, "1A": 10, "1C": 16, "1E": 25, "YA": 35, "1V": 35, "1H": 50,
-       "2A": 100, "2E": 250}
+       "1N": 75, "2A": 100, "2E": 250}
 
 
 def _murata(m):  # GRM21BZ71H475ME15K, GCM32ER71C226ME19K
@@ -197,14 +201,15 @@ _DECODERS = [
     (re.compile(r"^(RC|AC)(0201|0402|0603|0805|1206)([A-JW])R-(07W?|10W?|13W?|7W)(\w+?)L$"), _yageo_r),
     (re.compile(r"^HCJ(0402|0603|0805|1206)ZT0R00$"), _stackpole_hcj),
     (re.compile(r"^RNCP(0402|0603|0805|1206)([BCDF])T[A-Z]?(\w+)$"), _stackpole_rncp),
+    (re.compile(r"^RMCF(0201|0402|0603|0805|1206)ZT0R00$"), lambda m: _res(m[1], 0.0, None, aec=True, series="Stackpole RMCF jumper")),
     (re.compile(r"^RMCF(0201|0402|0603|0805|1206)([FGJ])[GT](\w+)$"), _stackpole),
     (re.compile(r"^CRCW(0402|0603|0805|1206)(\w+?)([FGJ])\w{3}$"), _vishay),
     (re.compile(r"^(CRGCQ|CRGP|CRG|CPF)(0402|0603|0805|1206)([FJ])(\w+?)(C1)?$"), _te_crg),
     (re.compile(r"^MCR(01|03|10|18)\w{2,3}([FJ])X?(\d{3,4})$"), _rohm_mcr),
 ]
 
-_KOA = re.compile(r"^(RK73B|RN73\d?)(1E|1J|2A|2B)\w*?TD(\d{3,4})([FJ])")
-_KOA_RN = re.compile(r"^(RN73)2?(1E|1J|2A|2B)TTD(\d{4})([B-F])")
+_KOA = re.compile(r"^(RK73B)(1E|1J|2A|2B)\w*?TD(\d{3,4})([FJ])")
+_KOA_RN = re.compile(r"^(RN73)(1E|1J|2A|2B)TTD(\d{4})([B-F])")
 
 
 def decode_mpn(mpn):
@@ -216,7 +221,7 @@ def decode_mpn(mpn):
         m = rx.match(p)
         if m:
             return fn([p] + list(m.groups()))   # [0] = full part number (suffixes)
-    m = _KOA_RN.match(p.replace("RN732", "RN73"))
+    m = _KOA_RN.match(p)
     if m:
         return _res({"1E": "0402", "1J": "0603", "2A": "0805", "2B": "1206"}[m[2]],
                     code3(m[3]), _RES_TOL.get(m[4]), tech="thin", series="KOA RN73")
@@ -288,3 +293,64 @@ def fmt_value(kind, v):
         if v >= s:
             return f"{v / s:g}{unit}"
     return f"{v:g}R"
+
+
+def _code4(ohms):
+    """4-character value code with the multiplier letter as decimal point:
+    4R70, 33R0, 120R, 1K00, 24K9, 100K, 1M00 (Stackpole RMCF, Vishay CRCW)."""
+    for letter, scale in (("M", 1e6), ("K", 1e3), ("R", 1.0)):
+        if ohms >= scale:
+            v = ohms / scale
+            break
+    digits = f"{v:.3g}"
+    if "e" in digits:
+        return None
+    whole, _, frac = digits.partition(".")
+    return (whole + letter + frac + "000")[:4] if len(whole) < 3 else whole + letter
+
+
+def _code_yageo(ohms):
+    """Yageo value code, trailing zeros dropped: 4R7, 10K, 100R, 1K, 1K5, 1M."""
+    c = _code4(ohms)
+    if c is None:
+        return None
+    for letter in "RKM":
+        if letter in c:
+            whole, _, frac = c.partition(letter)
+            return whole + letter + frac.rstrip("0")
+    return None
+
+
+def yageo_ac_1pct(package, ohms):
+    """Yageo AC automotive (AEC-Q200) 1 %, 7-inch reel: AC0603FR-0710KL."""
+    if package not in _YAGEO_POWER or not ohms or ohms < 1 or ohms > 10e6:
+        return None
+    return f"AC{package}FR-07{_code_yageo(ohms)}L"
+
+
+def vishay_crcw_1pct(package, ohms):
+    """Vishay CRCW e3 (AEC-Q200) 1 %, 100 ppm: CRCW060310K0FKEA (0402 packs as ED)."""
+    if package not in ("0402", "0603", "0805", "1206") or not ohms or ohms < 1 or ohms > 10e6:
+        return None
+    return f"CRCW{package}{_code4(ohms)}FK{'ED' if package == '0402' else 'EA'}"
+
+
+def rmcf_jumper(package):
+    """Stackpole RMCF 0 ohm jumper (AEC-Q200): RMCF0603ZT0R00."""
+    return f"RMCF{package}ZT0R00" if package in _RMCF_POWER else None
+
+
+E24 = (1.0, 1.1, 1.2, 1.3, 1.5, 1.6, 1.8, 2.0, 2.2, 2.4, 2.7, 3.0,
+       3.3, 3.6, 3.9, 4.3, 4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 8.2, 9.1)
+
+
+def e24_values(lo=1.0, hi=1e6):
+    out = []
+    decade = 1.0
+    while decade <= hi:
+        for m in E24:
+            v = round(m * decade, 6)
+            if lo <= v <= hi:
+                out.append(v)
+        decade *= 10
+    return out

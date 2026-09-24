@@ -16,6 +16,7 @@ Rules (upgrade-only - a substitute may be better, never worse):
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -121,6 +122,8 @@ def attributes(line):
     """Decoded attributes: the part number wins; the description fills gaps."""
     by_mpn = P.decode_mpn(line["mpn"])
     by_text = P.decode_description(f'{line["description"]} {line["name"]}')
+    if by_mpn is None and _NOT_A_PLAIN_PASSIVE.search(f'{line["description"]} {line["name"]}'):
+        return None, by_text, None
     if by_mpn is None:
         if by_text.get("type") in ("R", "C") and by_text.get("package") and by_text.get("value"):
             a = {"type": by_text["type"], "package": by_text["package"], "value": by_text["value"],
@@ -135,6 +138,12 @@ def attributes(line):
     if a["type"] == "R" and a.get("power") is None:
         a["power"] = by_text.get("power")
     return a, by_text, "part number"
+
+
+# thermistors, varistors, fuses, electrolytics... read like plain R/C in a
+# description but are not interchangeable chip passives
+_NOT_A_PLAIN_PASSIVE = re.compile(
+    r"thermistor|\bNTC\b|\bPTC\b|varistor|fuse|ferrite|electrolytic|tantalum|polymer", re.I)
 
 
 def mismatches(a, text):
@@ -163,6 +172,8 @@ def pool(a):
             return "shunt"
         if a.get("tolerance") is not None and a["tolerance"] < 1:
             return "precision"
+        if a.get("tech") == "thin":     # thin film is chosen for low TCR / drift
+            return "precision"
     return "general"
 
 
@@ -178,7 +189,11 @@ def tolerance_matters(a, bulk_cap_min):
 
 def covers(cand, member, bulk_cap_min=None):
     """Can `cand` be fitted wherever `member` is fitted? (None = unknown)."""
+    if cand.get("mpn") and cand.get("mpn") == member.get("mpn"):
+        return True                     # the same part always stands in for itself
     c, m = cand["attrs"], member["attrs"]
+    if m.get("flex") and not c.get("flex"):
+        return False                    # flexible termination is a requirement
     checks = []
     if c["type"] == "C":
         checks.append(None if c.get("voltage") is None or m.get("voltage") is None
@@ -198,7 +213,69 @@ def covers(cand, member, bulk_cap_min=None):
     return None if any(x is None for x in checks) else True
 
 
-def consolidate(lines, prefer_supplier="DigiKey", resistor_std_tol=None, bulk_cap_min=None):
+def load_library(folder):
+    """Library entries from dev/library_gen.py output (every *.csv in folder).
+    Returns records shaped like consolidate()'s parts: {mpn, manufacturer, attrs}."""
+    import csv
+    entries = []
+    for path in sorted(Path(folder).glob("*.csv")):
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            for row in csv.DictReader(f):
+                mpn = (row.get("Manufacturer Part Number 1") or "").strip()
+                a = P.decode_mpn(mpn) if mpn else None
+                if a:
+                    entries.append({"mpn": mpn, "manufacturer": row.get("Manufacturer 1", ""),
+                                    "name": row.get("Name", ""), "attrs": a})
+    return entries
+
+
+def match_library(g, members, library, bulk_cap_min):
+    """Point a requirement group at the library entry that can stand in for every
+    member (upgrade-only). Status: 'library' (already on it), 'to-library',
+    or 'not-in-library' (the library needs an entry for this requirement)."""
+    a0 = members[0]["attrs"]
+    if g["pool"] != "general" or (a0["type"] == "R" and not a0.get("value")):
+        return                                  # jumpers, shunts, precision: specials
+    cands = [e for e in library if e["attrs"]["type"] == a0["type"]
+             and e["attrs"]["package"] == a0["package"]
+             and e["attrs"]["value"] is not None and a0["value"] is not None
+             and abs(e["attrs"]["value"] - a0["value"]) <= 1e-6 * max(a0["value"], 1e-12)]
+    sizes = {e["attrs"]["package"] for e in library if e["attrs"]["type"] == a0["type"]}
+    if a0["package"] not in sizes:
+        g["status"] = "special"
+        g["reason"] = f'{a0["package"]} is not a library size - a special by choice'
+        return
+    fits = [e for e in cands if all(covers(e, m, bulk_cap_min) for m in members)]
+    if not fits and cands:
+        # partial: move whoever a library entry covers; the rest stay as specials
+        best = max(cands, key=lambda e: sum(bool(covers(e, m, bulk_cap_min)) for m in members))
+        moved = [m for m in members if covers(best, m, bulk_cap_min)]
+        if moved:
+            kept = [m for m in members if m not in moved]
+            g["library"] = g["recommend"] = best["mpn"]
+            g["status"] = "to-library-partial"
+            g["reason"] = (f'move to library part {best["mpn"]}; keep '
+                           f'{", ".join(m["mpn"] for m in kept)} as a special (needs '
+                           f'{requirement(kept, bulk_cap_min)})')
+            return
+    if not fits:
+        g["library"] = None
+        g["status"] = "not-in-library"
+        g["reason"] = ("library has no entry that covers " + requirement(members, bulk_cap_min)
+                       if cands else "library has no entry for this value and size")
+        return
+    # the lowest-rated entry that still covers everyone (no needless upgrade)
+    pick = sorted(fits, key=lambda e: (e["attrs"].get("voltage") or 0))[0]
+    g["library"] = pick["mpn"]
+    if all(m["mpn"] == pick["mpn"] for m in members):
+        g["status"], g["reason"] = "library", "already on the library part"
+    else:
+        g["status"], g["recommend"] = "to-library", pick["mpn"]
+        g["reason"] = f'move to library part {pick["mpn"]} ({pick["name"]})'
+
+
+def consolidate(lines, prefer_supplier="DigiKey", resistor_std_tol=None, bulk_cap_min=None,
+                library=None):
     """resistor_std_tol: library tolerance for general resistors (e.g. 1.0) -
     any general resistor left on a looser part gets a library-part proposal.
     bulk_cap_min: farads; class-II MLCCs at or above it ignore tolerance."""
@@ -264,7 +341,9 @@ def consolidate(lines, prefer_supplier="DigiKey", resistor_std_tol=None, bulk_ca
             else:
                 g["status"] = "needs-new-part"
                 g["reason"] = "no existing part covers all members: " + requirement(members, bulk_cap_min)
-        if resistor_std_tol is not None:
+        if library:
+            match_library(g, members, library, bulk_cap_min)
+        elif resistor_std_tol is not None:
             apply_resistor_standard(g, members, resistor_std_tol)
         out.append(g)
     return {"groups": out, "other": other, "lines": len(lines)}
@@ -326,6 +405,8 @@ def main(argv=None):
     ap.add_argument("--prefer-supplier", default="DigiKey")
     ap.add_argument("--resistor-standard", type=float, metavar="PCT",
                     help="library tolerance for general resistors, e.g. 1")
+    ap.add_argument("--library", metavar="FOLDER",
+                    help="library tables from dev/library_gen.py; groups are matched to them")
     ap.add_argument("--bulk-cap-min", type=float, metavar="FARADS",
                     help="class-II MLCCs at or above this ignore tolerance, e.g. 1e-6")
     ap.add_argument("--json", help="write the full result here")
@@ -342,7 +423,8 @@ def main(argv=None):
         rec, ch = reconcile(board_lines, [p for p in paths.split(";") if p], label)
         lines += rec
         changes += ch
-    res = consolidate(lines, args.prefer_supplier, args.resistor_standard, args.bulk_cap_min)
+    library = load_library(args.library) if args.library else None
+    res = consolidate(lines, args.prefer_supplier, args.resistor_standard, args.bulk_cap_min, library)
     res["changed_since_export"] = changes
     if args.json:
         Path(args.json).write_text(json.dumps(res, indent=1, default=list), encoding="utf-8")
