@@ -43,3 +43,15 @@ Explorer > Ctrl-click 2 components > right-click Edit. Gotchas:
 - Parts placed from Manufacturer Part Search are auto-acquired into the workspace (clutter).
 - Generic footprints existed only at least density (_L), several duplicates of each.
 - Old generic parts sit in Draft state; retire via lifecycle once boards use the standard parts.
+
+## Capacitors (2026-09-24)
+
+- Template symbol: SYM-006-0000-2 (CAP-NP-2.SchLib). One SchLib per footprint size, because every
+  component in a build shares one footprint: 0402 (7), 0603 (15), 0805 (6) built from
+  `library_gen.CAPACITORS`.
+- Footprint = the TALLEST `_L` variant of each size (`CAPC0402(1005)60_L`, `CAPC0603(1608)100_L`,
+  `CAPC0805(2012)145_L`); pads are the same across heights, so the tallest covers every part.
+- 1206/1210: no standalone footprint item in the workspace (the IPC-named `CAPC3216X190X55L30T25`
+  exists only inside a generic component) - build them before those caps can import.
+- Component names over 31 characters are fine: only the OLE storage label is truncated; the
+  LibReference inside keeps the full name. `verify` compares the first 31 characters.

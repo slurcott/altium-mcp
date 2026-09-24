@@ -210,6 +210,8 @@ def verify(path, expected_names, footprint, mpn_pattern=None):
     extra, footprint referenced once per component (and part numbers, if a
     regex is given)."""
     names = schlib_component_names(path)
+    # OLE storage names stop at 31 characters; the full LibReference is inside
+    expected_names = [n[:31] for n in expected_names]
     b = Path(path).read_bytes()
     fp_hits = len(re.findall(re.escape(footprint.encode()), b))
     out = {"components": len(names),

@@ -67,3 +67,14 @@ class Verify(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class LongNameTest(unittest.TestCase):
+    def test_verify_long_names_truncated_by_ole(self):
+        # "CAP 0805 100nF 50V X7R flex-term" is 32 chars; OLE storage names keep 31
+        names = ["CAP 0805 100nF 50V X7R", "CAP 0805 100nF 50V X7R flex-term", "CAP 0805 1µF 50V X7R",
+                 "CAP 0805 2.2µF 50V X7R", "CAP 0805 4.7µF 50V X7R", "CAP 0805 10µF 10V X7R"]
+        r = PS.verify(SERVER / "tests" / "fixtures" / "std_cap_0805_longname.SchLib", names,
+                      "CAPC0805(2012)145_L")
+        self.assertTrue(r["ok"], r)
