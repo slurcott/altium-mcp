@@ -53,6 +53,7 @@ COLUMNS = [
     ("Manufacturer Part Number 3", "mpn3"),
     ("Library Status", "status"),
     ("Verified", "verified"),
+    ("Notes", "note"),
 ]
 
 METRIC = {"0402": "1005", "0603": "1608", "0805": "2012", "1206": "3216", "1210": "3225"}
@@ -111,6 +112,15 @@ CAPACITORS = [
     ("1210", "22µF", 22e-6, 16, "X7R", 10, "C1210C226K4RACAUTO", K, "DigiKey",
      MUR, "GCM32ER71C226ME19K"),
 ]
+
+
+# Deliberate exceptions to the library rules, recorded so nobody "fixes" them later.
+CAP_NOTES = {
+    "C0603C106M8PACTU": "ACCEPTED X5R (85 C) - 0603 kept for board space (Steve 2026-09-24); "
+                        "no 0603 10 uF X7R alternative. Do not swap to 0805 without a layout change.",
+    "C0805X104J5RACTU": "Flexible termination - use where board flex / cracking matters.",
+    "C0603C101JAGACAUTO": "250 V C0G - chosen where the voltage margin matters.",
+}
 
 
 def fmt_ohms(v):
@@ -174,18 +184,18 @@ def capacitor_rows():
         d = P.decode_mpn(mpn)
         assert d and d["package"] == pkg and abs(d["value"] - f) < 1e-3 * f \
             and d["voltage"] == volts and d["dielectric"] == diel, (mpn, d)
-        bulk = diel != "C0G" and f >= 1e-6
+        class2 = diel != "C0G"
         rows.append({
             "name": f"CAP {pkg} {val} {volts:g}V {diel}" + (" flex-term" if d.get("flex") else ""),
             "description": f"CAP MLCC {val} {volts:g}V {diel} {pkg}"
                            + (" AEC-Q200" if d["aec"] else ""),
             "comment": val, "value": val, "package": pkg, "metric": METRIC[pkg],
-            "tolerance": "don't care (bulk)" if bulk else (f"±{tol:g}%" if tol else "see part"),
+            "tolerance": "don't care (class II)" if class2 else (f"±{tol:g}%" if tol else "see part"),
             "power": "", "voltage": f"{volts:g}V", "dielectric": diel, "tcr": "",
             "ratings": "AEC-Q200" if d["aec"] else "", "symbol": "Capacitor",
             "footprint": CAP_FOOTPRINT[pkg], "mfr1": mfr, "mpn1": mpn,
             "mfr2": alt[0] if alt else "", "mpn2": alt[1] if alt else "", "mfr3": "", "mpn3": "",
-            "status": "STANDARD", "verified": where,
+            "status": "STANDARD", "verified": where, "note": CAP_NOTES.get(mpn, ""),
         })
     return rows
 

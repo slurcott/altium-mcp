@@ -407,8 +407,10 @@ def main(argv=None):
                     help="library tolerance for general resistors, e.g. 1")
     ap.add_argument("--library", metavar="FOLDER",
                     help="library tables from dev/library_gen.py; groups are matched to them")
-    ap.add_argument("--bulk-cap-min", type=float, metavar="FARADS",
-                    help="class-II MLCCs at or above this ignore tolerance, e.g. 1e-6")
+    ap.add_argument("--bulk-cap-min", type=float, metavar="FARADS", default=0.0,
+                    help="class-II (X7R/X5R...) MLCCs at or above this ignore tolerance. "
+                         "Default 0 = all class II (library policy 2026-09-24: they drift "
+                         "+/-15%% over temperature anyway; precision parts are C0G)")
     ap.add_argument("--json", help="write the full result here")
     args = ap.parse_args(argv)
     lines = []
