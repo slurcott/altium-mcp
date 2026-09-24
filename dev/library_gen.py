@@ -67,13 +67,14 @@ RMCF = {"0402": (0.0625, 50, 0.40), "0603": (0.1, 75, 0.55), "0805": (0.125, 150
         "1206": (0.25, 200, 0.70)}
 JUMPER_AMPS = {"0402": 1, "0603": 1, "0805": 2, "1206": 2}
 
-# Standard footprints: IPC-7351 NOMINAL density (Steve 2026-09-24), the generic
-# workspace footprints already placed on the OV4F B_1 boards. None = not built
-# yet (0805 R, 1206 C) - those rows are held back until the footprint exists.
-RES_FOOTPRINT = {"0402": "RESC1005X40X25NL05T10", "0603": "RESC0603(1608)_N", "0805": None,
+# Standard footprints: IPC least density (_L), Steve 2026-09-24 - already in the
+# workspace and proven on the B_1 boards; board space is tight. Resistor names
+# confirmed in the workspace (RESC0603(1608)_L = item PCC-007-0006-1; 4 duplicates
+# exist - use that one). Capacitor _L names and RESC0805 still to confirm by
+# searching the workspace; None = held back.
+RES_FOOTPRINT = {"0402": "RESC0402(1005)_L", "0603": "RESC0603(1608)_L", "0805": None,
                  "1206": None}
-CAP_FOOTPRINT = {"0402": "CAPC1005X56X25NL10T15", "0603": "CAPC1608X90X35NL15T15",
-                 "0805": "CAPC0805(2012)145_N", "1206": None, "1210": "CAPC1210(3225)280_N"}
+CAP_FOOTPRINT = {"0402": None, "0603": None, "0805": None, "1206": None, "1210": None}
 RES_SYMBOL = "SYM-004-0030-1"      # workspace generic resistor (confirmed)
 CAP_SYMBOL = "SYM-006-0000-2"      # workspace generic non-polarised capacitor (confirmed)
 
@@ -235,7 +236,7 @@ def placeholder_rows():
     return rows
 
 
-HOLD = "HOLD - footprint not built yet"
+HOLD = "HOLD - footprint not confirmed yet"
 
 
 def fp_status(fp):
