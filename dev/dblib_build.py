@@ -51,8 +51,10 @@ def resistor_records(package, schlib, pcblib, symbol_ref, footprint_ref):
             # a template parameter it refuses to leave empty (2026-09-24 trial); one shared
             # value keeps a single symbol for the whole batch.
             "Part Number": r["name"], "Name": r["name"], "Symbol Name": symbol_ref,
-            "Library Ref": symbol_ref, "Library Path": str(schlib),
-            "Footprint Ref": footprint_ref, "Footprint Path": str(pcblib),
+            # file names only: models are found through the DbLib's LibrarySearchPath
+            # (absolute paths were not followed by the Library Importer, 2026-09-24)
+            "Library Ref": symbol_ref, "Library Path": Path(schlib).name,
+            "Footprint Ref": footprint_ref, "Footprint Path": Path(pcblib).name,
             "Description": r["description"], "Comment": r["value"].replace("Ω", ""),
             "Value": r["value"].replace("Ω", ""), "Case/Package": package,
             "Mounting Technology": "SMT", "Pins": "2", "Power": r["power"],
@@ -91,13 +93,13 @@ $cn.Close()
 '''
 
 
-def dblib_text(db_name, tables, enabled):
+def dblib_text(db_name, tables, enabled, search_path=""):
     out = ["[OutputDatabaseLinkFile]", "Version=1.1", "[DatabaseLinks]",
            f"ConnectionString=Provider=Microsoft.ACE.OLEDB.12.0;Data Source={db_name};Persist Security Info=False",
            "AddMode=2", "RemoveMode=1", "UpdateMode=2", "ViewMode=0", "LeftQuote=[", "RightQuote=]",
            "QuoteTableNames=1", "UseTableSchemaName=0", "DefaultColumnType=VARCHAR(255)",
            "LibraryDatabaseType=Microsoft Access 2007", f"LibraryDatabasePath={db_name}",
-           "DatabasePathRelative=1", "TopPanelCollapsed=0", "LibrarySearchPath=",
+           "DatabasePathRelative=1", "TopPanelCollapsed=0", f"LibrarySearchPath={search_path}",
            "OrcadMultiValueDelimiter=,", "SearchSubDirectories=0", "SchemaName=",
            f"LastFocusedTable={tables[0]}"]
     for i, t in enumerate(tables, 1):
@@ -153,7 +155,8 @@ def main(argv=None):
         return 1
     enabled = {trial_name} if args.enable == "trial" else {full_name}
     dbl = out / f"Standard_Passives_{args.package}{args.tag}.DbLib"
-    dbl.write_text(dblib_text(db.name, [trial_name, full_name], enabled), encoding="utf-8")
+    dbl.write_text(dblib_text(db.name, [trial_name, full_name], enabled,
+                              search_path=str(out.resolve())), encoding="utf-8")
     js.unlink()
     ps.unlink()
     print(f"wrote {dbl.name} (enabled: {', '.join(sorted(enabled))}), {db.name}: "
