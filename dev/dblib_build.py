@@ -28,7 +28,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "server"))
 import library_gen as L  # noqa: E402
 
-COLUMNS = ["Part Number", "Library Ref", "Library Path", "Footprint Ref", "Footprint Path",
+COLUMNS = ["Part Number", "Name", "Symbol Name", "Library Ref", "Library Path", "Footprint Ref", "Footprint Path",
            "Description", "Comment", "Value", "Case/Package", "Mounting Technology", "Pins",
            "Power", "RoHS Compliant", "Tolerance", "Voltage Rating",
            "Max Operating Temperature", "Min Operating Temperature",
@@ -47,7 +47,11 @@ def resistor_records(package, schlib, pcblib, symbol_ref, footprint_ref):
         if r["value"] == "0Ω" or r["name"] in L.ALREADY_IN_WORKSPACE:
             continue
         recs.append({
-            "Part Number": r["name"], "Library Ref": symbol_ref, "Library Path": str(schlib),
+            # Name / Symbol Name: what the Library Importer maps by default. Symbol Name is
+            # a template parameter it refuses to leave empty (2026-09-24 trial); one shared
+            # value keeps a single symbol for the whole batch.
+            "Part Number": r["name"], "Name": r["name"], "Symbol Name": symbol_ref,
+            "Library Ref": symbol_ref, "Library Path": str(schlib),
             "Footprint Ref": footprint_ref, "Footprint Path": str(pcblib),
             "Description": r["description"], "Comment": r["value"].replace("Ω", ""),
             "Value": r["value"].replace("Ω", ""), "Case/Package": package,
@@ -120,6 +124,7 @@ def main(argv=None):
     ap.add_argument("--footprint-ref", default="RESC0402(1005)_L")
     ap.add_argument("--package", default="0402")
     ap.add_argument("--enable", choices=("trial", "full"), default="trial")
+    ap.add_argument("--tag", default="", help="suffix for the output file names (avoid files open in Altium)")
     args = ap.parse_args(argv)
 
     out = Path(args.out)
@@ -140,14 +145,14 @@ def main(argv=None):
     js.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
     ps = out / "dblib_build.ps1"
     ps.write_text(PS_BUILD, encoding="utf-8")
-    db = out / f"Standard_Passives_{args.package}.accdb"
+    db = out / f"Standard_Passives_{args.package}{args.tag}.accdb"
     res = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps),
                           "-Db", str(db), "-Json", str(js)], capture_output=True, text=True)
     print(res.stdout.strip(), res.stderr.strip())
     if res.returncode != 0:
         return 1
     enabled = {trial_name} if args.enable == "trial" else {full_name}
-    dbl = out / f"Standard_Passives_{args.package}.DbLib"
+    dbl = out / f"Standard_Passives_{args.package}{args.tag}.DbLib"
     dbl.write_text(dblib_text(db.name, [trial_name, full_name], enabled), encoding="utf-8")
     js.unlink()
     ps.unlink()
