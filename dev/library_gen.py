@@ -296,6 +296,8 @@ BATCH_COLUMNS = ["FolderPath", "Item ID", "Name", "Type", "Description", "Datash
 
 
 TSV_SEP, TSV_EOL = chr(9), chr(10)
+# Library parts already created in the workspace - never batch them again.
+ALREADY_IN_WORKSPACE = {"RES 0603 12kΩ 1%"}         # CMP-009-00177, 2026-09-24 (TMC R20)
 RES_FOLDER = "Components" + chr(92) + "Resistors"
 
 
@@ -307,6 +309,8 @@ def batch_rows(package, folder=RES_FOLDER):
     for r in resistor_rows(package):
         if r["value"] == "0Ω":
             continue                                   # jumpers: separate, reviewed by hand
+        if r["name"] in ALREADY_IN_WORKSPACE:
+            continue
         out.append([folder, "", r["name"], "Resistors", r["description"], "", fp, RES_SYMBOL,
                     package, r["tmax"], r["tmin"], "SMT", "2", r["power"], "Yes", "1%",
                     r["value"].replace("Ω", ""), r["voltage"],
