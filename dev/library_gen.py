@@ -299,6 +299,8 @@ BATCH_COLUMNS = ["FolderPath", "Item ID", "Name", "Type", "Description",
 TSV_SEP, TSV_EOL = chr(9), chr(10)
 # Library parts already created in the workspace - never batch them again.
 ALREADY_IN_WORKSPACE = {"RES 0603 12kΩ 1%"}         # CMP-009-00177, 2026-09-24 (TMC R20)
+# Whole batches already released to the workspace - skipped entirely.
+BATCHES_DONE = {"0603"}                              # 2026-09-24: 144 via batch-grid paste
 RES_FOLDER = "Components" + chr(92) + "Resistors"
 
 
@@ -323,6 +325,8 @@ def batch_rows(package, folder=RES_FOLDER):
 def write_batch(out_dir):
     written = {}
     for pkg in ("0402", "0603", "0805"):
+        if pkg in BATCHES_DONE:
+            continue
         rows = batch_rows(pkg)
         if rows is None:
             continue
