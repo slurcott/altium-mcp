@@ -286,7 +286,8 @@ FOOTPRINT_ITEM = {("R", "0603"): "PCC-007-0006-1",   # RESC0603(1608)_L (4 dupli
                   ("R", "0402"): None}               # RESC0402(1005)_L item ID - to find
 MFR_NAME = {"Stackpole Electronics": "Stackpole Electronics", "YAGEO": "Yageo Group",
             "Vishay Dale": "Vishay"}
-BATCH_COLUMNS = ["FolderPath", "Item ID", "Name", "Type", "Description", "Datasheets",
+# No "Datasheets" column: the grid only shows it when a selected part has one.
+BATCH_COLUMNS = ["FolderPath", "Item ID", "Name", "Type", "Description",
                  "PCBLIB (default)", "SCHLIB", "Case/Package", "Max Operating Temperature",
                  "Min Operating Temperature", "Mounting Technology", "Pins", "Power",
                  "RoHS Compliant", "Tolerance", "Value", "Voltage Rating",
@@ -311,7 +312,7 @@ def batch_rows(package, folder=RES_FOLDER):
             continue                                   # jumpers: separate, reviewed by hand
         if r["name"] in ALREADY_IN_WORKSPACE:
             continue
-        out.append([folder, "", r["name"], "Resistors", r["description"], "", fp, RES_SYMBOL,
+        out.append([folder, "", r["name"], "Resistors", r["description"], fp, RES_SYMBOL,
                     package, r["tmax"], r["tmin"], "SMT", "2", r["power"], "Yes", "1%",
                     r["value"].replace("Ω", ""), r["voltage"],
                     MFR_NAME[r["mfr1"]], r["mpn1"], MFR_NAME[r["mfr2"]], r["mpn2"],
