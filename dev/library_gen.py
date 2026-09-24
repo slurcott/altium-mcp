@@ -75,7 +75,7 @@ JUMPER_AMPS = {"0402": 1, "0603": 1, "0805": 2, "1206": 2}
 RES_FOOTPRINT = {"0402": "RESC0402(1005)_L", "0603": "RESC0603(1608)_L", "0805": None,
                  "1206": None}
 CAP_FOOTPRINT = {"0402": None, "0603": None, "0805": None, "1206": None, "1210": None}
-RES_SYMBOL = "SYM-004-0030-1"      # workspace generic resistor (confirmed)
+RES_SYMBOL = "SYM-007-0001-2"      # RES-2, the Resistor template symbol (batch grid 2026-09-24)
 CAP_SYMBOL = "SYM-006-0000-2"      # workspace generic non-polarised capacitor (confirmed)
 
 
@@ -138,13 +138,13 @@ CAP_NOTES = {
 }
 
 
-def fmt_ohms(v):
+def fmt_ohms(v, sign="Ω"):
     if v == 0:
-        return "0Ω"
+        return "0" + sign
     for unit, s in (("M", 1e6), ("k", 1e3)):
         if v >= s:
-            return f"{v / s:g}{unit}Ω"
-    return f"{v:g}Ω"
+            return f"{v / s:g}{unit}{sign}"
+    return f"{v:g}{sign}"
 
 
 def fmt_farads(f):
@@ -271,9 +271,64 @@ def main(argv=None):
     ph = placeholder_rows()
     write_csv(out / "placeholders.csv", ph)
     summary["placeholders"] = len(ph)
+    summary.update(write_batch(out))
     (out / "library_summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
     print(json.dumps(summary))
     return summary
+
+
+
+# ---- Altium 365 Component Editor batch grid (seen 2026-09-24) -------------------
+# Exact column order of the batch grid; Part Choices are Manufacturer/Part Number
+# pairs; models are referenced by ITEM ID, not name. Paste the data rows (no
+# header) with the first cell on FolderPath.
+FOOTPRINT_ITEM = {("R", "0603"): "PCC-007-0006-1",   # RESC0603(1608)_L (4 duplicates exist)
+                  ("R", "0402"): None}               # RESC0402(1005)_L item ID - to find
+MFR_NAME = {"Stackpole Electronics": "Stackpole Electronics", "YAGEO": "Yageo Group",
+            "Vishay Dale": "Vishay"}
+BATCH_COLUMNS = ["FolderPath", "Item ID", "Name", "Type", "Description", "Datasheets",
+                 "PCBLIB (default)", "SCHLIB", "Case/Package", "Max Operating Temperature",
+                 "Min Operating Temperature", "Mounting Technology", "Pins", "Power",
+                 "RoHS Compliant", "Tolerance", "Value", "Voltage Rating",
+                 "Part Choice 1 Manufacturer", "Part Choice 1 Part Number",
+                 "Part Choice 2 Manufacturer", "Part Choice 2 Part Number",
+                 "Part Choice 3 Manufacturer", "Part Choice 3 Part Number"]
+
+
+TSV_SEP, TSV_EOL = chr(9), chr(10)
+RES_FOLDER = "Components" + chr(92) + "Resistors"
+
+
+def batch_rows(package, folder=RES_FOLDER):
+    fp = FOOTPRINT_ITEM.get(("R", package))
+    if not fp:
+        return None
+    out = []
+    for r in resistor_rows(package):
+        if r["value"] == "0Ω":
+            continue                                   # jumpers: separate, reviewed by hand
+        out.append([folder, "", r["name"], "Resistors", r["description"], "", fp, RES_SYMBOL,
+                    package, r["tmax"], r["tmin"], "SMT", "2", r["power"], "Yes", "1%",
+                    r["value"].replace("Ω", ""), r["voltage"],
+                    MFR_NAME[r["mfr1"]], r["mpn1"], MFR_NAME[r["mfr2"]], r["mpn2"],
+                    MFR_NAME[r["mfr3"]], r["mpn3"]])
+    return out
+
+
+def write_batch(out_dir):
+    written = {}
+    for pkg in ("0402", "0603", "0805"):
+        rows = batch_rows(pkg)
+        if rows is None:
+            continue
+        path = Path(out_dir) / f"batch_resistors_{pkg}.tsv"
+        # tab-separated: pastes into grids as cells; header kept on line 1 for checking
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            f.write(TSV_SEP.join(BATCH_COLUMNS) + TSV_EOL)
+            for row in rows:
+                f.write(TSV_SEP.join(row) + TSV_EOL)
+        written[path.name] = len(rows)
+    return written
 
 
 if __name__ == "__main__":
