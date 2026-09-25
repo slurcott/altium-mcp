@@ -138,3 +138,10 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   `C:\Users\SteveLurcott` path. Risk: edit one copy, save the other. Fix: resolve paths
   (os.path.realpath) before handing them to Altium, and reuse an open document whose resolved
   path matches before calling Client.OpenDocument.
+
+- **B17 (2026-09-25) Bulk lifecycle change (retire superseded parts).** DelphiScript has no
+  workspace lifecycle API (only read-only LifeCycle fields and ILibraryUpdatePartOptions.
+  NewLifeCycleState). Retiring 99 superseded generics was manual Explorer Ctrl/Shift-click +
+  Batch state change ("Make n Obsolete"). Investigate the Nexar GraphQL API for an A365
+  lifecycle mutation; prove on ONE part first. Selection logic already exists (retire lists in
+  OV4F hardware/library/passives/retire_list_*.md, rule: same size+value, >= power/voltage).
