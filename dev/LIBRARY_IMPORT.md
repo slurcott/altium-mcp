@@ -55,3 +55,8 @@ Explorer > Ctrl-click 2 components > right-click Edit. Gotchas:
   exists only inside a generic component) - build them before those caps can import.
 - Component names over 31 characters are fine: only the OLE storage label is truncated; the
   LibReference inside keeps the full name. `verify` compares the first 31 characters.
+- The Capacitor template's **Tolerance** parameter is typed Percent: "±0.5pF" fails Validate
+  ("cannot be converted to unit of type Percent"). Put absolute tolerances in a separate
+  "Tolerance Absolute" parameter.
+- Add EVERY size's PcbLib as a source when importing several SchLibs in one run, or each
+  missing one gives "Footprint ... is not found in available libraries".
