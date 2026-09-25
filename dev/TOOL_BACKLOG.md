@@ -159,3 +159,10 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   non-zero airline count as "ask for Board Information", never as a defect. Fix idea: only count
   connections whose endpoints land on a same-net pad/via/track, or read the routing-completion
   figure Board Information uses.
+
+- **B20 (2026-09-25) get_pcb_layer_stackup drops CORE dielectrics.** On TMC B_1 (6 layer) it reported
+  total 19.5 mil with "No Dielectric" under an inner Gnd layer; the FE 4-layer Layer Stack Manager
+  shows Core-043 52 mil between layers 2 and 3 (real total 63.1 mil). The tool only attaches the
+  dielectric that follows a copper layer as prepreg and skips cores - it led to a wrong "stackup is
+  0.020 in" claim. Fix: iterate the stack's dielectric objects (cores included) and sum all heights;
+  add a total that matches the Layer Stack Manager.
