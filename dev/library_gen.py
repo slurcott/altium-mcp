@@ -72,7 +72,7 @@ JUMPER_AMPS = {"0402": 1, "0603": 1, "0805": 2, "1206": 2}
 # confirmed in the workspace (RESC0603(1608)_L = item PCC-007-0006-1; 4 duplicates
 # exist - use that one). Capacitor _L names and RESC0805 still to confirm by
 # searching the workspace; None = held back.
-RES_FOOTPRINT = {"0402": "RESC0402(1005)_L", "0603": "RESC0603(1608)_L", "0805": None,
+RES_FOOTPRINT = {"0402": "RESC0402(1005)_L", "0603": "RESC0603(1608)_L", "0805": "RESC0805(2012)_L",
                  "1206": None}
 # Cap footprints: tallest _L variant per size (pads identical; height covers every part).
 # Items PCC-006-0002/0011/0012. 1206/1210 built 2026-09-25 (IPC-7351B least, calibrated to
@@ -305,7 +305,7 @@ TSV_SEP, TSV_EOL = chr(9), chr(10)
 # Library parts already created in the workspace - never batch them again.
 ALREADY_IN_WORKSPACE = {"RES 0603 12kΩ 1%"}         # CMP-009-00177, 2026-09-24 (TMC R20)
 # Whole batches already released to the workspace - skipped entirely.
-BATCHES_DONE = {"0603", "0402"}   # 0603: batch-grid paste; 0402: SchLib + Library Importer (2026-09-24)
+BATCHES_DONE = {"0603", "0402", "0805"}   # 0603: batch-grid paste; 0402: SchLib + Library Importer (2026-09-24)
 RES_FOLDER = "Components" + chr(92) + "Resistors"
 
 
