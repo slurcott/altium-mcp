@@ -230,34 +230,9 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class Library(unittest.TestCase):
-    """dev/library_gen.py output, and consolidate() matching against it."""
-
-    @classmethod
-    def setUpClass(cls):
-        import tempfile
-        import library_gen as L
-        cls.L = L
-        cls.tmp = tempfile.mkdtemp()
-        cls.summary = L.main(["--out", cls.tmp])
-        cls.lib = B.load_library(cls.tmp)
-
-    def test_every_row_decodes_and_names_are_unique(self):
-        import csv
-        names = []
-        for f in Path(self.tmp).glob("*.csv"):
-            with open(f, encoding="utf-8-sig", newline="") as fh:
-                for row in csv.DictReader(fh):
-                    names.append(row["Name"])
-                    for k in ("Manufacturer Part Number 1", "Manufacturer Part Number 2",
-                              "Manufacturer Part Number 3"):
-                        if row.get(k):
-                            self.assertIsNotNone(P.decode_mpn(row[k]), row[k])
-        self.assertEqual(len(names), len(set(names)))
-
-    def test_e24_one_ohm_to_one_megohm_plus_jumper(self):
-        self.assertEqual(len(P.e24_values()), 145)
-        self.assertEqual(self.summary["resistors_0603"], 146)
+class SeriesRules(unittest.TestCase):
+    """Part-number builders (server/passives.py). The library tables that use them moved to the
+    lurcott-library repo (tests/test_library.py) on 2026-09-25."""
 
     def test_alternate_series_rules(self):
         self.assertEqual(P.yageo_ac_1pct("0603", 4700), "AC0603FR-074K7L")
@@ -265,39 +240,4 @@ class Library(unittest.TestCase):
         self.assertEqual(P.vishay_crcw_1pct("0402", 4700), "CRCW04024K70FKED")
         self.assertEqual(P.vishay_crcw_1pct("0603", 4.7), "CRCW06034R70FKEA")
         self.assertEqual(P.rmcf_jumper("0603"), "RMCF0603ZT0R00")
-
-    def run_lib(self, lines, bulk=1e-6):
-        return B.consolidate(lines, bulk_cap_min=bulk, library=self.lib)
-
-    def test_moves_to_library_part(self):
-        g = group(self.run_lib([line("F", "R10", "MCR03FZPJ472"), line("T", "R2", "RMCF0603JG4K70")]),
-                  "0603", "4.7k")
-        self.assertEqual((g["status"], g["recommend"]), ("to-library", "RMCF0603FT4K70"))
-
-    def test_same_part_matches_itself_even_with_unknown_tolerance(self):
-        g = group(self.run_lib([line("F", "C33", "C0603C689D5GACAUTO")]), "0603", "6.8pF")
-        self.assertEqual(g["status"], "library")
-
-    def test_partial_keeps_the_power_special(self):
-        res = self.run_lib([line("F", "R20", "CRCW060310K0JNEA"),
-                            line("F", "R29", "AC0603FR-7W10KL")])
-        g = group(res, "0603", "10k")
-        self.assertEqual(g["status"], "to-library-partial")
-        self.assertIn("AC0603FR-7W10KL as a special", g["reason"])
-
-    def test_flex_termination_is_kept(self):
-        g = group(self.run_lib([line("T", "C2", "C0805X104J5RACTU")]), "0805", "100nF")
-        self.assertEqual(g["status"], "library")        # only the flex-term entry covers it
-        self.assertTrue(P.decode_mpn("C0805X104J5RACTU")["flex"])
-
-    def test_non_library_size_is_a_special(self):
-        g = group(self.run_lib([line("F", "C23", "18121C104KAT2A")]), "1812", "100nF")
-        self.assertEqual(g["status"], "special")
-
-    def test_thin_film_and_electrolytic_stay_out(self):
-        res = self.run_lib([line("F", "R25", "RN732ATTD9092F100"),
-                            line("T", "C10", "EMZR350ARA561MJA0G",
-                                 desc="560 uF 35 V Aluminum Electrolytic Capacitors 1210")])
-        self.assertEqual(P.decode_mpn("RN732ATTD9092F100")["tech"], "thin")
-        self.assertEqual(group(res, "0805", "90.9k")["pool"], "precision")
-        self.assertEqual(len(res["other"]), 1)
+        self.assertEqual(len(P.e24_values()), 145)

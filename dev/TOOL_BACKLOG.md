@@ -144,4 +144,9 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   NewLifeCycleState). Retiring 99 superseded generics was manual Explorer Ctrl/Shift-click +
   Batch state change ("Make n Obsolete"). Investigate the Nexar GraphQL API for an A365
   lifecycle mutation; prove on ONE part first. Selection logic already exists (retire lists in
-  OV4F hardware/library/passives/retire_list_*.md, rule: same size+value, >= power/voltage).
+  lurcott-library passives/retired/, rule: same size+value, >= power/voltage).
+
+- **B18 (2026-09-25) Private library data in local history.** dev/library_gen.py (Lurcott Labs
+  part choices) was committed on tool-dev from 8497f73 and moved to the private lurcott-library
+  repo. None of it was ever pushed (fork/* branches predate it), but slurcott/altium-mcp is
+  PUBLIC: before pushing tool-dev, squash/rewrite so those commits don't go up, or accept it.

@@ -214,7 +214,7 @@ def covers(cand, member, bulk_cap_min=None):
 
 
 def load_library(folder):
-    """Library entries from dev/library_gen.py output (every *.csv in folder).
+    """Library entries from lurcott-library passives/tables (library_gen.py output) (every *.csv in folder).
     Returns records shaped like consolidate()'s parts: {mpn, manufacturer, attrs}."""
     import csv
     entries = []
@@ -406,7 +406,7 @@ def main(argv=None):
     ap.add_argument("--resistor-standard", type=float, metavar="PCT",
                     help="library tolerance for general resistors, e.g. 1")
     ap.add_argument("--library", metavar="FOLDER",
-                    help="library tables from dev/library_gen.py; groups are matched to them")
+                    help="library tables (lurcott-library passives/tables); groups are matched to them")
     ap.add_argument("--bulk-cap-min", type=float, metavar="FARADS", default=0.0,
                     help="class-II (X7R/X5R...) MLCCs at or above this ignore tolerance. "
                          "Default 0 = all class II (library policy 2026-09-24: they drift "

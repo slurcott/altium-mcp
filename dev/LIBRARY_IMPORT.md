@@ -1,5 +1,10 @@
 # Building a workspace component library (Altium 365) - what works
 
+> The library DATA (part tables, `library_gen.py`, build scripts, footprint specs, retire lists)
+> lives in the private **lurcott-library** repo (`../lurcott-library`), not in this tool repo.
+> This file is the generic how-to; the tool code it uses is `server/passives.py`,
+> `server/passive_schlib.py` and `dev/bom_consolidate.py`.
+
 Learned 2026-09-24 putting 290 standard resistors (E24, 0402 + 0603, 1 % RMCF with
 Yageo AC / Vishay CRCW part choices) into an Altium 365 workspace.
 
@@ -48,7 +53,7 @@ Explorer > Ctrl-click 2 components > right-click Edit. Gotchas:
 
 - Template symbol: SYM-006-0000-2 (CAP-NP-2.SchLib). One SchLib per footprint size, because every
   component in a build shares one footprint: 0402 (7), 0603 (15), 0805 (6) built from
-  `library_gen.CAPACITORS`.
+  `library_gen.CAPACITORS` (lurcott-library repo).
 - Footprint = the TALLEST `_L` variant of each size (`CAPC0402(1005)60_L`, `CAPC0603(1608)100_L`,
   `CAPC0805(2012)145_L`); pads are the same across heights, so the tallest covers every part.
 - 1206/1210: no standalone footprint item in the workspace (the IPC-named `CAPC3216X190X55L30T25`
