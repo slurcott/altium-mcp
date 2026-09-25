@@ -150,3 +150,12 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   part choices) was committed on tool-dev from 8497f73 and moved to the private lurcott-library
   repo. None of it was ever pushed (fork/* branches predate it), but slurcott/altium-mcp is
   PUBLIC: before pushing tool-dev, squash/rewrite so those commits don't go up, or accept it.
+
+- **B19 (2026-09-25) pcb_query reports phantom airlines.** FE B_1: `pcb_query(summary)` said
+  `unrouted_connections: 2` on NetR19_2 (I2C SCL) before AND after a close/reopen, while Altium's
+  Reports > Board Information said 247/247 routed, 0 remaining, DRC Un-Routed Net 0, and the net
+  highlight showed no ratsnest. The eConnectionObject endpoints (x1/y1/x2/y2: (390,-378) ->
+  (1392,-153) -> (1708,-564) mils from origin) touched no object of that net. Until fixed, treat a
+  non-zero airline count as "ask for Board Information", never as a defect. Fix idea: only count
+  connections whose endpoints land on a same-net pad/via/track, or read the routing-completion
+  figure Board Information uses.
