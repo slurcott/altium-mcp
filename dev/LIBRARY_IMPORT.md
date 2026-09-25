@@ -71,3 +71,19 @@ Explorer > Ctrl-click 2 components > right-click Edit. Gotchas:
 - 3D body (manual, ~1 min each): Tools > Manage 3D Bodies for Library > row "Shape created from
   bounding rectangle on Mechanical13" > Overall Height e.g. `1.9mm`, Registration Layer
   **Top 3D Body** (newer Altium lists layer TYPES, not "Mechanical 13") > click "Not In Component".
+
+## Lessons from using the library on a real board (2026-09-25, OV4F B_1)
+
+- **build_passive_schlib output had EMPTY symbols** for all rows but the last (B22). Until fixed:
+  after import, preview a few parts' symbols - pins must show. Repair = batch Component Editor,
+  paste the good symbol id (CAP-NP-2 = SYM-006-0000-2, RES-2 = SYM-007-0001-2) into the SCHLIB column.
+- **create_footprints_batch put the 1206 footprint 50 in off its origin** (B23). After building a
+  footprint: Ctrl+End in the editor - the pads must sit on the origin. "Offset Component Origin" at
+  release is real.
+- **Check footprint silk against the target board's rules** before using a footprint widely (Altium
+  0805 _L cap/res and 0402 _L cap fail 7 mil silk-to-mask with 2 mil mask expansion).
+- **Swapping existing placements to library parts** moves pins off the wires; follow the swap
+  procedure in the altium-review skill (snapshot, Item Manager "Choose manually", realign, prove the
+  netlist identical, then PCB) - backlog B24.
+- Explorer puts imported SYM items in the same folder as the components; exclude them when
+  batch-selecting components.
