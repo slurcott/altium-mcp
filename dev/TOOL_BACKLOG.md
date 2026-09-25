@@ -166,3 +166,10 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   dielectric that follows a copper layer as prepreg and skips cores - it led to a wrong "stackup is
   0.020 in" claim. Fix: iterate the stack's dielectric objects (cores included) and sum all heights;
   add a total that matches the Layer Stack Manager.
+
+- **B21 (2026-09-25) bom_consolidate doesn't recognise library parts by name.** A placed workspace
+  library part (Comment "RES 0603 4.7kOhm 1%") is decoded from its description as its own "part"
+  with no MPN, so it shows as a second part number in its group and never as status `library`.
+  Fix: when --library is given, map the library table's Name -> Manufacturer Part Number 1 (and
+  the other part choices) before grouping. Also: Explorer/BOM paths > 260 chars fail in xlsx_read
+  (copy to a short path first) - consider \?\ prefixes.
