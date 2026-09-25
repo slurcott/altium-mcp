@@ -75,9 +75,11 @@ JUMPER_AMPS = {"0402": 1, "0603": 1, "0805": 2, "1206": 2}
 RES_FOOTPRINT = {"0402": "RESC0402(1005)_L", "0603": "RESC0603(1608)_L", "0805": None,
                  "1206": None}
 # Cap footprints: tallest _L variant per size (pads identical; height covers every part).
-# Items PCC-006-0002/0011/0012. 1206/1210: no standalone item in the workspace - to build.
+# Items PCC-006-0002/0011/0012. 1206/1210 built 2026-09-25 (IPC-7351B least, calibrated to
+# the 0805 _L: Z rounded up, pad length 0.76 mm) - no standalone item existed in the workspace.
 CAP_FOOTPRINT = {"0402": "CAPC0402(1005)60_L", "0603": "CAPC0603(1608)100_L",
-                 "0805": "CAPC0805(2012)145_L", "1206": None, "1210": None}
+                 "0805": "CAPC0805(2012)145_L", "1206": "CAPC1206(3216)190_L",
+                 "1210": "CAPC1210(3225)270_L"}
 RES_SYMBOL = "SYM-007-0001-2"      # RES-2, the Resistor template symbol (batch grid 2026-09-24)
 CAP_SYMBOL = "SYM-006-0000-2"      # workspace generic non-polarised capacitor (confirmed)
 
