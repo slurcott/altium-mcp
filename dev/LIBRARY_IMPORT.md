@@ -60,3 +60,9 @@ Explorer > Ctrl-click 2 components > right-click Edit. Gotchas:
   "Tolerance Absolute" parameter.
 - Add EVERY size's PcbLib as a source when importing several SchLibs in one run, or each
   missing one gives "Footprint ... is not found in available libraries".
+- 1206/1210 had no standalone footprint item: built with `create_footprints_batch` (spec in raw
+  library mils, origin 50000/50000 - same as `get_footprint_primitives` dumps), starting from a
+  copy of the downloaded 0805 PcbLib (delete that footprint before import).
+- 3D body (manual, ~1 min each): Tools > Manage 3D Bodies for Library > row "Shape created from
+  bounding rectangle on Mechanical13" > Overall Height e.g. `1.9mm`, Registration Layer
+  **Top 3D Body** (newer Altium lists layer TYPES, not "Mechanical 13") > click "Not In Component".
