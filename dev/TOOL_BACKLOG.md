@@ -173,3 +173,22 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   Fix: when --library is given, map the library table's Name -> Manufacturer Part Number 1 (and
   the other part choices) before grouping. Also: Explorer/BOM paths > 260 chars fail in xlsx_read
   (copy to a short path first) - consider \?\ prefixes.
+
+- **B22 (2026-09-25) build_passive_schlib produced EMPTY symbols.** `Src.Replicate` copies the
+  component record but NOT its child pins/graphics for the CAP-NP-2 template (and pins for RES-2), so
+  every row except the last (the edited original) imported with an empty symbol. The Library Importer
+  then de-duplicated all empties into one empty SYM item per file. verify() only checked component
+  names + footprint links. Found when swapped FE caps had no pins. Workspace fixed by batch-repointing
+  SCHLIB to SYM-006-0000-2 / SYM-007-0001-2. Fix: copy child primitives explicitly (iterate the source's
+  pins/graphics and AddSchObject a Replicate of each), and make verify() count pins + graphics per
+  component (fail if any component has 0 pins).
+- **B23 (2026-09-25) create_footprints_batch double-applied the library origin.** Spec coords given
+  as raw library mils (50000-based, as get_footprint_primitives dumps them) landed at 100000 for
+  CAPC1206(3216)190_L (50 in off origin -> "Offset Component Origin" at release). Fix: make the spec
+  origin-relative (subtract Board.XOrigin/YOrigin on dump, add on create) and document it; add a
+  post-create check that pads are centred on the origin.
+- **B24 (2026-09-25) Library swap needs pin realignment.** Replacing parts whose old symbols have a
+  different pin span/origin leaves pins off the wires. Proven procedure (FE 58 + TMC 42 placements,
+  netlist IDENTICAL): ~/.ov4fb/realign.py (plan: ROT / MOVE pin1->old pin1 / WIRE bridge pin2; check:
+  per-pin net membership vs a pre-swap copy) + realign.pas. Mirrored parts rotate the opposite way.
+  Promote into the tool (MCP command + tests).
