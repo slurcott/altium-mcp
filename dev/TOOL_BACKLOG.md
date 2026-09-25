@@ -131,3 +131,10 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   (server/passive_schlib.py, offline tests). Proven live 2026-09-24: 145 0402 resistors
   imported with Part Choices, 1 shared symbol + 1 footprint. Full workflow and the routes
   that do NOT work (DbLib, batch grid limits): dev/LIBRARY_IMPORT.md.
+
+- **B16 (2026-09-25) Same PcbLib opened twice.** `create_footprints_batch` (FPLIB) and
+  `get_footprint_primitives(library_path=...)` each opened `Std_Cap_1206_1210.PcbLib`; it showed
+  twice under Free Documents - likely the `C:\Users\Steve` junction vs the real
+  `C:\Users\SteveLurcott` path. Risk: edit one copy, save the other. Fix: resolve paths
+  (os.path.realpath) before handing them to Altium, and reuse an open document whose resolved
+  path matches before calling Client.OpenDocument.
