@@ -13,7 +13,7 @@ check: per sheet, every pin's net membership (the set of pins it connects to) mu
 import sys
 from pathlib import Path
 
-sys.path.insert(0, r"C:\Users\Steve\Documents\projects\tools\altium-mcp\server")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
 import schdoc_file as S
 
 
