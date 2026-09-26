@@ -2926,6 +2926,56 @@ async def build_passive_schlib(ctx: Context, template_schlib: str, out_schlib: s
 
 
 @mcp.tool()
+async def copy_sheet(ctx: Context, source: str, destination: str, port_map: dict = None,
+                     reset_designators: bool = True) -> str:
+    """
+    Copy a schematic sheet (e.g. a released block from another project) to a NEW file and
+    adapt it: rename ports to the target project's names/IO types, reset auto-style
+    designators (letters+number -> 'C?') so annotation renumbers only the copied parts,
+    save, and read the new sheet's netlist back. Proven by hand 2026-09-26 (FE CAN sheet
+    -> OV4F keypad). EDITS a new file only; the source is never opened for writing.
+
+    Named designators (TP_TXCAN, TP_5v0, R_S3) are kept. After this, the user adds the file
+    to the project (Project > Add Existing), points the sheet symbol at it, annotates;
+    then verify with project_netlist(compare_to=<snapshot>).
+
+    Args:
+        source (str): the sheet to copy (.SchDoc).
+        destination (str): new .SchDoc path (must not exist).
+        port_map (dict): {old port name: new name} or {old: {"name": new, "io":
+            "input"|"output"|"bidirectional"|"unspecified"}}.
+        reset_designators (bool): reset letters+number designators to 'X?' (default True).
+
+    Returns:
+        str: JSON with the script result, save result, and the new sheet's nets/ports.
+    """
+    import sheet_copy as SC
+    import schdoc_file
+    try:
+        lines = SC.plan(source, destination, port_map or {})
+        SC.copy_file(source, destination)
+        spec = str(Path(r"C:\Users\Public\altium_mcp\copy_sheet_spec.txt"))
+        Path(spec).parent.mkdir(parents=True, exist_ok=True)
+        Path(spec).write_text("\n".join(lines) + "\n", encoding="cp1252")
+        script = SC.render_script(str(Path(destination)).replace("/", "\\"), spec, reset_designators)
+    except (OSError, ValueError, KeyError) as e:
+        return json.dumps({"success": False, "error": str(e)})
+    run = json.loads(await run_altium_script(ctx, script=script, timeout_seconds=120))
+    if not run.get("success"):
+        return json.dumps({"success": False, "stage": "script", "run": run,
+                           "note": "the copied file exists on disk; delete it before retrying"}, indent=1)
+    saved = json.loads(await save_doc(ctx, str(Path(destination))))
+    try:
+        nets = schdoc_file.netlist(str(destination))
+        ports = sorted(p["text"] for p in schdoc_file.Sheet(str(destination)).ports)
+    except Exception as e:      # readback is informational
+        nets, ports = [], [f"readback failed: {e}"]
+    return json.dumps({"success": bool(saved.get("success")), "script": run.get("result"),
+                       "save": saved, "ports": ports,
+                       "nets": [{"name": n["name"], "pins": n["pins"]} for n in nets]}, indent=1)
+
+
+@mcp.tool()
 async def datasheet_drawing_pages(ctx: Context, pdf: str, pages: list = None, out_dir: str = None,
                                   scale: float = 3.0) -> str:
     """

@@ -244,3 +244,7 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   footprints such as LFPAK56 drains). Decode the custom outline, treat it like a region in check/overlay;
   and probe the API to CREATE custom pads from create_footprints_batch (unverified - needs a sandbox probe).
   Use case: dual LFPAK56 / PowerPAK SO-8L footprint for the OV4F keypad Q3.
+- **B28 (2026-09-26) copy_sheet MCP tool. DONE (offline-tested, lint clean; not yet run as the tool).**
+  server/sheet_copy.py + copy_sheet: copy a sheet to a NEW file, rename ports (+IO types), reset only
+  letters+number designators (named ones like TP_5v0 / R_S3 kept - the trap found by hand), save, read the
+  netlist back. Every API call in its script was used live on 2026-09-26.
