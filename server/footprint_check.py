@@ -289,6 +289,9 @@ def check(fp, spec, silk_marker_radius=1.5):
         if near == 0:
             warns.append("no silkscreen within 1.5 mm of pin 1 - is there a pin-1 marker?")
 
+    if fp.get("regions"):
+        warns.append(f"footprint has {len(fp['regions'])} copper region(s) beyond its pads - the pad check "
+                     "does not include them; judge the land from the overlay (regions drawn in red)")
     return {"verdict": "FAIL" if fails else "PASS", "failures": fails, "warnings": warns, "info": info}
 
 
@@ -308,6 +311,9 @@ def render_overlay(fp, spec, out_png, px_per_mm=120, title=None):
         exp.append({"name": p["name"], "x": x, "y": y, "w": w, "h": h})
     act = [dict(p, x=p["x"] - cx, y=p["y"] - cy) for p in actual]
     allp = exp + act
+    for reg in fp.get("regions", []):
+        for x, y in reg["points"]:
+            allp.append({"x": x * MIL - cx, "y": y * MIL - cy, "w": 0, "h": 0})
     minx = min(p["x"] - p["w"] / 2 for p in allp) - 0.6
     maxx = max(p["x"] + p["w"] / 2 for p in allp) + 0.6
     miny = min(p["y"] - p["h"] / 2 for p in allp) - 0.6
@@ -322,6 +328,10 @@ def render_overlay(fp, spec, out_png, px_per_mm=120, title=None):
 
     for p in act:
         d.rectangle(box(p), fill=(220, 40, 40, 110))
+    for reg in fp.get("regions", []):         # copper regions (mils, footprint coordinates)
+        pts = [((x * MIL - cx - minx) * px_per_mm, (maxy - (y * MIL - cy)) * px_per_mm) for x, y in reg["points"]]
+        if len(pts) >= 3:
+            d.polygon(pts, fill=(220, 40, 40, 110))
     for p in exp:
         d.rectangle(box(p), outline=(0, 150, 0, 255), width=3)
         bx = box(p)

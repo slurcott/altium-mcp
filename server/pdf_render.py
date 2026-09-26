@@ -5,7 +5,8 @@ Used to read package / land-pattern drawings as images. No poppler needed.
 import re
 from pathlib import Path
 
-LP_WORDS = re.compile(r"EXAMPLE BOARD LAYOUT|LAND PATTERN|RECOMMENDED (?:PCB )?(?:FOOTPRINT|LAYOUT)|"
+LP_WORDS = re.compile(r"EXAMPLE BOARD LAYOUT|LAND PATTERN|PAD PATTERN|RECOMMENDED (?:MINIMUM )?PADS?|"
+                      r"RECOMMENDED (?:PCB )?(?:FOOTPRINT|LAYOUT)|"
                       r"PACKAGE OUTLINE|PACKAGE DRAWING|MECHANICAL DATA|EXAMPLE STENCIL", re.I)
 
 

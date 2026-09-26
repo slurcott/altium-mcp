@@ -129,3 +129,98 @@ def read_pcblib(path):
         except (struct.error, IndexError):
             out[storage] = {"name": storage, "error": "unparsed"}
     return out
+
+
+# ------------------------------------------------------------------ placed footprints (.PcbDoc)
+def _text_records(data):
+    """|KEY=VALUE| records of a PcbDoc text stream (uint32 length + text)."""
+    pos, out = 0, []
+    while pos + 4 <= len(data):
+        (n,) = struct.unpack_from("<I", data, pos)
+        pos += 4
+        t = data[pos:pos + n].rstrip(b"\0").decode("latin-1")
+        pos += n
+        out.append(dict(kv.split("=", 1) for kv in t.strip("|").split("|") if "=" in kv))
+    return out
+
+
+def _mil(v):
+    return float(str(v).lower().replace("mil", "").strip() or 0)
+
+
+def read_pcbdoc_footprint(path, designator):
+    """A placed footprint from a saved .PcbDoc, back in its own (library) coordinates.
+
+    Components6 gives each component's placement (X, Y, ROTATION, LAYER); Pads6 holds
+    every pad in board coordinates with its component index at byte 7 of the main
+    block (65535 = free pad). The placement is undone: subtract X/Y, rotate by
+    -ROTATION, and un-mirror bottom-side parts, so the result compares directly with
+    a datasheet land pattern (top view). Returns the parse_footprint() shape plus
+    'placement'.
+    """
+    import math
+    st = read_ole_storage_streams(path, "Data")
+    comps = _text_records(st["Components6"])
+    idx = [i for i, c in enumerate(comps) if c.get("SOURCEDESIGNATOR") == designator]
+    if not idx:
+        raise KeyError(f"{designator} not in {path}")
+    i = idx[0]
+    c = comps[i]
+    cx, cy = _mil(c.get("X", 0)), _mil(c.get("Y", 0))
+    rot = float(c.get("ROTATION", 0) or 0)
+    bottom = c.get("LAYER", "TOP").upper() == "BOTTOM"
+    # top: board = R(rot)·local  -> local = R(-rot)·board
+    # bottom: board = M·R(rot)·local (rotate, then mirror in x) -> local = R(-rot)·M·board
+    #         = M·R(+rot)·board: rotate by +rot, then mirror. Verified 2026-09-26 on a
+    #         bottom-side part (U2 on the OV4F keypad) against its library footprint.
+    r = math.radians(rot if bottom else -rot)
+    data = st["Pads6"]
+    pos, pads = 0, []
+    while pos < len(data):
+        t = data[pos]
+        pos += 1
+        subs = []
+        for _ in range(SUBRECORDS.get(t, 6)):
+            (ln,) = struct.unpack_from("<I", data, pos)
+            pos += 4
+            subs.append(data[pos:pos + ln])
+            pos += ln
+        if t != TYPE_PAD or len(subs) < 5 or struct.unpack_from("<H", subs[4], 7)[0] != i:
+            continue
+        p = _pad(subs)
+        dx, dy = p["x"] - cx, p["y"] - cy
+        x, y = dx * math.cos(r) - dy * math.sin(r), dx * math.sin(r) + dy * math.cos(r)
+        if bottom:
+            x, prot = -x, (-(p["rotation"] + rot)) % 360
+        else:
+            prot = (p["rotation"] - rot) % 360
+        p.update(x=round(x, 4), y=round(y, 4), rotation=round(prot, 3))
+        pads.append(p)
+    # copper regions owned by the component (e.g. an LFPAK56 drain mounting base drawn as a
+    # region around a small pad): main block = layer @0, component index @7, parameter
+    # text length @18 + text @22, then vertex count (uint32) + vertices (2 doubles, internal
+    # units). Only copper layers (Top 1 / Bottom 32) are kept.
+    regions = []
+    data = st.get("Regions6", b"")
+    pos = 0
+    while pos < len(data):
+        t = data[pos]
+        pos += 1
+        (ln,) = struct.unpack_from("<I", data, pos)
+        pos += 4
+        b = data[pos:pos + ln]
+        pos += ln
+        if len(b) < 26 or struct.unpack_from("<H", b, 7)[0] != i or b[0] not in (1, 32):
+            continue
+        (tl,) = struct.unpack_from("<I", b, 18)
+        j = 22 + tl
+        (nv,) = struct.unpack_from("<I", b, j)
+        pts = []
+        for k in range(nv):
+            vx, vy = struct.unpack_from("<2d", b, j + 4 + 16 * k)
+            dx, dy = vx / UNIT - cx, vy / UNIT - cy
+            x, y = dx * math.cos(r) - dy * math.sin(r), dx * math.sin(r) + dy * math.cos(r)
+            pts.append((round(-x if bottom else x, 4), round(y, 4)))
+        regions.append({"layer": LAYERS.get(b[0], str(b[0])), "points": pts})
+    return {"name": c.get("PATTERN", designator), "pads": pads, "tracks": [], "arcs": [], "unknown": 0,
+            "regions": regions, "placement": {"x": cx, "y": cy, "rotation": rot, "bottom": bottom}}
