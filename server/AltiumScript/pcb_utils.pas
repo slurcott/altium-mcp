@@ -63,6 +63,7 @@ begin
     FailedArray := TStringList.Create;
     ResultProps := TStringList.Create;
     LibComp := nil;
+    PcbLib := nil;
     CreatedCount := 0;
     PrimErrors := 0;
 
@@ -245,6 +246,12 @@ begin
 
         AddJSONInteger(ResultProps, 'created', CreatedCount);
         AddJSONInteger(ResultProps, 'primitive_errors', PrimErrors);
+        // Library origin (raw mils): the caller checks pads are centred on it
+        if (PcbLib <> nil) then
+        begin
+            AddJSONInteger(ResultProps, 'origin_x', Round(CoordToMils(PcbLib.Board.XOrigin)));
+            AddJSONInteger(ResultProps, 'origin_y', Round(CoordToMils(PcbLib.Board.YOrigin)));
+        end;
         if (FailedArray.Count > 0) then
             ResultProps.Add(BuildJSONArray(FailedArray, 'failed'))
         else

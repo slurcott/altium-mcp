@@ -187,6 +187,14 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   CAPC1206(3216)190_L (50 in off origin -> "Offset Component Origin" at release). Fix: make the spec
   origin-relative (subtract Board.XOrigin/YOrigin on dump, add on create) and document it; add a
   post-create check that pads are centred on the origin.
+  **Investigated + guarded 2026-09-25.** Scratch test (~/.ov4fb/b23): create places RAW coords exactly
+  as given (50000-based pads land centred on the 50000 origin; a 0-based spec lands 50000 mil off), so
+  dump and create already agree - the "double origin" hypothesis is wrong and the frame was NOT
+  changed (would break every existing spec). The 1206 offset is unexplained; prime suspect is the B16
+  double-open (same PcbLib under the C:/Users/Steve junction and the real path). Guards added:
+  footprint_spec.py resolves the FPLIB path (realpath) before Altium sees it; the script reports the
+  library origin; the tool returns off_origin (pads not centred on origin). Tests test_footprint_spec.
+  Still to do: live-confirm off_origin on a scratch lib next time Altium is free.
 - **B24 (2026-09-25) Library swap needs pin realignment.** Replacing parts whose old symbols have a
   different pin span/origin leaves pins off the wires. Proven procedure (FE 58 + TMC 42 placements,
   netlist IDENTICAL): ~/.ov4fb/realign.py (plan: ROT / MOVE pin1->old pin1 / WIRE bridge pin2; check:

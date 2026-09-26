@@ -22,6 +22,7 @@ import glob
 import re
 
 import altium_guard
+import footprint_spec
 
 # Configure logging
 logging.basicConfig(
@@ -1421,14 +1422,29 @@ async def create_footprints_batch(ctx: Context, spec_file: str) -> str:
             TEXT|x|y|size|width|rotation|layer|mirror|ttf|text
             REGION|layer|kind|x1|y1|x2|y2|...
 
+        Coordinates are RAW library coordinates, not origin-relative: a
+        PcbLib's origin is usually at 50000,50000, so pads centred on the
+        origin are written around 50000,50000 (get_footprint_primitives dumps
+        the same raw frame, so dump -> create round-trips).
+
     Returns:
-        str: JSON with created count, primitive_errors, failed names
+        str: JSON with created count, primitive_errors, failed names, the
+        library origin, and off_origin: footprints whose pad centre is not on
+        the origin (Altium reports these as "Offset Component Origin" on
+        import; intentional for pin-1-origin parts, a bug otherwise).
     """
     logger.info(f"Creating footprints batch from {spec_file}")
 
+    # The same file under the C:\Users\Steve junction and the real path opens as
+    # two live documents (B16/B23) - always hand Altium the resolved path.
+    try:
+        run_spec, fplib_in, fplib_real = footprint_spec.resolve_fplib(spec_file)
+    except OSError as e:
+        return json.dumps({"success": False, "error": f"Cannot read spec: {e}"})
+
     response = await altium_bridge.execute_command(
         "create_footprints_batch",
-        {"spec_file": spec_file}
+        {"spec_file": run_spec}
     )
 
     if not response.get("success", False):
@@ -1436,7 +1452,19 @@ async def create_footprints_batch(ctx: Context, spec_file: str) -> str:
         return json.dumps({"success": False, "error": f"Failed batch footprint creation: {error_msg}"})
 
     result = response.get("result", {})
-    return json.dumps(result, indent=2) if not isinstance(result, str) else result
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except ValueError:
+            return result
+    if fplib_in and fplib_real and fplib_in != fplib_real:
+        result["fplib_resolved"] = fplib_real
+    if "origin_x" in result and "origin_y" in result:
+        with open(spec_file, encoding="cp1252") as f:
+            centres = footprint_spec.pad_centres(f.read())
+        result["off_origin"] = footprint_spec.off_origin(
+            centres, result["origin_x"], result["origin_y"])
+    return json.dumps(result, indent=2)
 
 @mcp.tool()
 async def build_schematic(ctx: Context, parts: list, wires: list = None,
