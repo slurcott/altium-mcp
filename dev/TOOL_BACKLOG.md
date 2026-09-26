@@ -226,3 +226,13 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   (style 4-7) attach along y; ports abutting sheet entries with no wire; pinless clusters kept
   (clusters()); schdoc_file passes port iotype/style. build() output unchanged on 31 real sheets.
   Open: Repeat() not expanded; duplicate symbol designators numbered in file order.
+- **B26 (2026-09-26) IC footprint vs datasheet checker - core DONE (offline).** server/pcblib_file.py reads
+  saved .PcbLib footprints without Altium (pads: pos/size/shape incl. roundrect %/rotation/hole; tracks/arcs;
+  offsets verified on a TI QFN module + Altium _L chip footprints; 38 libs/332 fps/1964 pads parse).
+  server/footprint_check.py: spec = datasheet land pattern (hard position check) or package dims
+  (dual/quad, JEDEC CCW numbering, IPC-7351B nominal as advisory, lead-on-pad coverage as the hard
+  check). FAIL: pin set, mirror, pitch, lead miss, small/missing EP; WARN: origin offset, IPC size,
+  mask sliver, pin-1 silk. B23 root cause found with it: pads are stored relative to each library's
+  origin, and a new blank library's origin differs from a downloaded one.
+  NEXT: MCP tool wrapper; land pattern FROM A DRAWING (screenshot -> dims -> pads, with a rendered
+  preview to confirm the read); symbol-pin vs pad cross-check; spec -> create_footprints_batch.
