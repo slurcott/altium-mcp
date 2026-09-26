@@ -84,6 +84,6 @@ Explorer > Ctrl-click 2 components > right-click Edit. Gotchas:
   0805 _L cap/res and 0402 _L cap fail 7 mil silk-to-mask with 2 mil mask expansion).
 - **Swapping existing placements to library parts** moves pins off the wires; follow the swap
   procedure in the altium-review skill (snapshot, Item Manager "Choose manually", realign, prove the
-  netlist identical, then PCB) - backlog B24.
+  netlist identical, then PCB); the realign + proof step is the MCP tool realign_swapped_parts.
 - Explorer puts imported SYM items in the same folder as the components; exclude them when
   batch-selecting components.

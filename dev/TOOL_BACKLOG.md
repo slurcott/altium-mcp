@@ -190,6 +190,9 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   verified in this Altium). verify() now fails on any 0-pin component or on more than one
   (pins, graphics) shape across the lib. Live test: build a 3-row cap + 3-row res scratch lib, run
   verify (expect ok, one shape), open one component in Altium to eyeball.
+  BLOCKER until then: the linter refuses the script (`.RemoveSchObject` never run). Probe it first in
+  a short run_altium_script on a scratch SchLib with allow_new_api=["RemoveSchObject"]; once a run
+  completes it lands in verified_api.txt and build_passive_schlib runs normally.
 - **B23 (2026-09-25) create_footprints_batch double-applied the library origin.** Spec coords given
   as raw library mils (50000-based, as get_footprint_primitives dumps them) landed at 100000 for
   CAPC1206(3216)190_L (50 in off origin -> "Offset Component Origin" at release). Fix: make the spec
@@ -208,3 +211,9 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   netlist IDENTICAL): ~/.ov4fb/realign.py (plan: ROT / MOVE pin1->old pin1 / WIRE bridge pin2; check:
   per-pin net membership vs a pre-swap copy) + realign.pas. Mirrored parts rotate the opposite way.
   Promote into the tool (MCP command + tests).
+  **Done 2026-09-25 (offline-tested; apply path not yet run as the MCP tool).** server/swap_realign.py
+  + MCP tool realign_swapped_parts (apply=False: plan + check only; apply=True: ROT pass, save,
+  re-plan, MOVE/WIRE pass, save, check). New: IDEMPOTENT - a part is skipped once its pins have their
+  baseline connectivity (the old script re-proposed every bridge wire on a fixed sheet); a part still
+  wrong after one turn goes MANUAL instead of spinning. Smoke: released FE/TMC/fixture plan 0 lines,
+  check IDENTICAL. dev/realign_swap.py is now a CLI over the module; realign_swap.pas removed.

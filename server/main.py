@@ -2926,6 +2926,76 @@ async def build_passive_schlib(ctx: Context, template_schlib: str, out_schlib: s
 
 
 @mcp.tool()
+async def realign_swapped_parts(ctx: Context, project: str, baseline_dir: str,
+                                apply: bool = False, only: list = None,
+                                max_passes: int = 3) -> str:
+    """
+    After replacing schematic parts with library parts (Item Manager / Replace
+    Component + ECO), put each swapped 2-pin part back on its old wires and
+    PROVE the netlist is unchanged. Proven on the OV4F B_1 boards 2026-09-25
+    (FE 58 + TMC 42 placements, netlist IDENTICAL).
+
+    Procedure this belongs to (dev/LIBRARY_IMPORT.md "Lessons from a real board"):
+      1. BEFORE the swap, copy every .SchDoc of the project to baseline_dir
+         (History copies like Sheet.~(3).SchDoc are fine).
+      2. Swap in Altium, Apply ECO, save all.
+      3. Call this with apply=False: offline plan + netlist check, nothing sent
+         to Altium. Review MANUAL items.
+      4. With the user's go-ahead, call with apply=True: it runs the plan in
+         Altium (rotations first, saves, re-plans, then moves + bridge wires),
+         saves the touched sheets and re-checks.
+      5. Only when check.identical is true: Update PCB.
+
+    A part is planned only if its Comment changed AND its pins no longer have
+    their baseline connectivity, so re-running on a fixed sheet plans nothing.
+    MANUAL: not exactly pins 1 and 2, a direction no quarter-turn matches, or a
+    part still wrong after one turn (mirrored parts turn the opposite way).
+
+    apply=True EDITS THE DESIGN - only with the user's explicit OK. The
+    project path must use the same spelling Altium has the sheets open under
+    (not the C:/Users/Steve junction if Altium opened C:/Users/SteveLurcott).
+
+    Args:
+        project (str): the .PrjPcb.
+        baseline_dir (str): folder holding the pre-swap .SchDoc copies.
+        apply (bool): False = plan + check only (default).
+        only (list): limit to these designators.
+        max_passes (int): plan/apply rounds (a rotation needs a second round).
+
+    Returns:
+        str: JSON with passes [{lines, script, saved}], manual, the final plan
+        (what is still left) and check {identical, sheets[{differences, first}]}.
+    """
+    import swap_realign as SR
+    only = set(only or ())
+    try:
+        passes, rotated = [], set()
+        lines, manual, n = SR.plan(baseline_dir, project, only, rotated)
+        while apply and lines and len(passes) < max_passes:
+            SR.write_spec(lines)
+            run = json.loads(await run_altium_script(ctx, script=SR.render_script(), timeout_seconds=300))
+            step = {"lines": lines, "script": run.get("result") if run.get("success") else run}
+            passes.append(step)
+            if not run.get("success"):
+                return json.dumps({"success": False, "stage": "script", "passes": passes}, indent=1)
+            step["saved"] = {}
+            for sheet in sorted({l.split("|")[1] for l in lines}):
+                saved = json.loads(await save_doc(ctx, sheet))
+                step["saved"][sheet] = bool(saved.get("success"))
+            if not all(step["saved"].values()):
+                return json.dumps({"success": False, "stage": "save", "passes": passes}, indent=1)
+            rotated |= {l.split("|")[2] for l in lines if l.startswith("ROT|")}
+            lines, manual, n = SR.plan(baseline_dir, project, only, rotated)
+        check = SR.check(baseline_dir, project)
+    except (OSError, ValueError, KeyError) as e:
+        return json.dumps({"success": False, "error": str(e)})
+    return json.dumps({"success": True, "applied": apply, "passes": passes,
+                       "plan": {"parts": n, "lines": lines},
+                       "manual": [{"sheet": m[0], "designator": m[1], "why": m[2]} for m in manual],
+                       "check": check}, indent=1)
+
+
+@mcp.tool()
 async def save_doc(ctx: Context, doc_path: str) -> str:
     """
     Save one open Altium document by path, and confirm the file changed on disk.
