@@ -23,8 +23,8 @@ ENDOFCHAIN = 0xFFFFFFFE
 
 
 # ----------------------------------------------------------------------------- OLE
-def read_ole_stream(path, name):
-    """Return the bytes of one top-level stream of an OLE compound file."""
+def _ole(path):
+    """Parse an OLE compound file: (directory entries, reader(entry) -> bytes)."""
     b = Path(path).read_bytes()
     if b[:8] != bytes.fromhex("D0CF11E0A1B11AE1"):
         raise ValueError(f"{path} is not an OLE compound file")
@@ -64,28 +64,70 @@ def read_ole_stream(path, name):
         entries.append({
             "name": e[:max(n - 2, 0)].decode("utf-16le", errors="replace"),
             "type": e[66],
+            "left": struct.unpack_from("<I", e, 68)[0],
+            "right": struct.unpack_from("<I", e, 72)[0],
+            "child": struct.unpack_from("<I", e, 76)[0],
             "start": struct.unpack_from("<I", e, 116)[0],
             "size": struct.unpack_from("<Q", e, 120)[0] & 0xFFFFFFFF,
         })
     root = entries[0]
+    minifat = None
+
+    def read(target):
+        nonlocal minifat
+        if target["size"] >= mini_cutoff:
+            data = b"".join(sector(s) for s in chain(target["start"]))
+            return data[:target["size"]]
+        # small stream: lives in the mini stream, indexed by the mini FAT
+        if minifat is None:
+            minifat = []
+            for s in chain(minifat_start):
+                minifat += struct.unpack_from(f"<{sector_size // 4}I", sector(s))
+        ministream = b"".join(sector(s) for s in chain(root["start"]))
+        out, s = [], target["start"]
+        while s < ENDOFCHAIN:
+            out.append(ministream[s * mini_size:(s + 1) * mini_size])
+            s = minifat[s]
+        return b"".join(out)[:target["size"]]
+
+    return entries, read
+
+
+def read_ole_stream(path, name):
+    """Return the bytes of one top-level stream of an OLE compound file."""
+    entries, read = _ole(path)
     target = next((e for e in entries if e["type"] == 2 and e["name"] == name), None)
     if target is None:
         raise KeyError(f"no stream named {name!r} in {path}")
+    return read(target)
 
-    if target["size"] >= mini_cutoff:
-        data = b"".join(sector(s) for s in chain(target["start"]))
-        return data[:target["size"]]
 
-    # small stream: lives in the mini stream, indexed by the mini FAT
-    minifat = []
-    for s in chain(minifat_start):
-        minifat += struct.unpack_from(f"<{sector_size // 4}I", sector(s))
-    ministream = b"".join(sector(s) for s in chain(root["start"]))
-    out, s = [], target["start"]
-    while s < ENDOFCHAIN:
-        out.append(ministream[s * mini_size:(s + 1) * mini_size])
-        s = minifat[s]
-    return b"".join(out)[:target["size"]]
+def read_ole_storage_streams(path, stream="Data"):
+    """{storage name: bytes of its child stream} for every top-level storage.
+
+    A .SchLib keeps one storage per component, each with a 'Data' stream
+    holding that component's records (pins, graphics, parameters)."""
+    entries, read = _ole(path)
+
+    def siblings(i):
+        out, stack, seen = [], [i], set()
+        while stack:
+            j = stack.pop()
+            if j >= len(entries) or j in seen:
+                continue
+            seen.add(j)
+            out.append(entries[j])
+            stack += [entries[j]["left"], entries[j]["right"]]
+        return out
+
+    result = {}
+    for st in siblings(entries[0]["child"]):
+        if st["type"] != 1:
+            continue
+        s = next((e for e in siblings(st["child"]) if e["type"] == 2 and e["name"] == stream), None)
+        if s is not None:
+            result[st["name"]] = read(s)
+    return result
 
 
 # ------------------------------------------------------------------------- records

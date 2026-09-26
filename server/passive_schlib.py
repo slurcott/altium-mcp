@@ -33,6 +33,8 @@ SCRIPT = r"""var
     Lib    : ISch_Lib;
     It     : ISch_Iterator;
     Src    : ISch_Component;
+    Obj    : ISch_GraphicalObject;
+    Guard  : Integer;
     C      : ISch_Component;
     CI     : ISch_Iterator;
     Param  : ISch_Parameter;
@@ -67,7 +69,32 @@ begin
     begin
         Line := Spec[I];
         if Line = '' then Continue;
-        if I < Spec.Count - 1 then C := Src.Replicate else C := Src;
+        if I < Spec.Count - 1 then
+        begin
+            // B22: Replicate copies the component record but only SOME of its
+            // pins/graphics (CAP-NP-2: none; RES-2: half the pins, no zigzag).
+            // Strip whatever it copied, then copy every pin/graphic from Src.
+            C := Src.Replicate;
+            Guard := 0;
+            repeat
+                CI := C.SchIterator_Create;
+                CI.AddFilter_ObjectSet(MkSet(ePin, eLine, ePolyline, ePolygon, eRectangle, eRoundRectangle, eArc, eEllipticalArc, eEllipse, ePie, eBezier, eLabel));
+                Obj := CI.FirstSchObject;
+                C.SchIterator_Destroy(CI);
+                if Obj <> nil then C.RemoveSchObject(Obj);
+                Guard := Guard + 1;
+            until (Obj = nil) or (Guard > 500);
+            CI := Src.SchIterator_Create;
+            CI.AddFilter_ObjectSet(MkSet(ePin, eLine, ePolyline, ePolygon, eRectangle, eRoundRectangle, eArc, eEllipticalArc, eEllipse, ePie, eBezier, eLabel));
+            Obj := CI.FirstSchObject;
+            while Obj <> nil do
+            begin
+                C.AddSchObject(Obj.Replicate);
+                Obj := CI.NextSchObject;
+            end;
+            Src.SchIterator_Destroy(CI);
+        end
+        else C := Src;
         Rest := Line;
         K := 0;
         while Rest <> '' do
@@ -205,10 +232,40 @@ def schlib_component_names(path):
     return names
 
 
+def component_record_counts(path):
+    """{component: {"pins": n, "graphics": n}} from each component's Data stream.
+
+    Pins are binary records (kind 1); graphics are text records whose RECORD is
+    a drawing primitive. B22: a component with 0 pins imports as an EMPTY symbol
+    and the Library Importer merges every empty one into a single SYM item."""
+    from schdoc_file import read_ole_storage_streams
+    out = {}
+    for name, data in read_ole_storage_streams(path).items():
+        pos, pins, graphics = 0, 0, 0
+        while pos + 4 <= len(data):
+            (word,) = struct.unpack_from("<I", data, pos)
+            length, kind = word & 0x00FFFFFF, word >> 24
+            body = data[pos + 4:pos + 4 + length]
+            pos += 4 + length
+            if kind == 1:
+                pins += 1
+            elif kind == 0:
+                m = re.search(rb"\|RECORD=(\d+)\|", body)
+                if m and int(m.group(1)) in GRAPHIC_RECORDS:
+                    graphics += 1
+        out[name] = {"pins": pins, "graphics": graphics}
+    return out
+
+
+# SchLib RECORD ids: 4 label, 5 bezier, 6 polyline, 7 polygon, 8 ellipse, 9 pie,
+# 10 round rectangle, 11 elliptical arc, 12 arc, 13 line, 14 rectangle
+GRAPHIC_RECORDS = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}
+
+
 def verify(path, expected_names, footprint, mpn_pattern=None):
     """Offline check of a built SchLib: every expected component present, none
-    extra, footprint referenced once per component (and part numbers, if a
-    regex is given)."""
+    extra, footprint referenced once per component, every component has the
+    template's pins and graphics (B22), and part numbers if a regex is given."""
     names = schlib_component_names(path)
     # OLE storage names stop at 31 characters; the full LibReference is inside
     expected_names = [n[:31] for n in expected_names]
@@ -220,6 +277,11 @@ def verify(path, expected_names, footprint, mpn_pattern=None):
            "footprint_links": fp_hits}
     if mpn_pattern:
         out["mpn_hits"] = len(re.findall(mpn_pattern.encode(), b))
+    counts = component_record_counts(path)
+    shapes = {(c["pins"], c["graphics"]) for c in counts.values()}
+    out["no_pins"] = sorted(n for n, c in counts.items() if c["pins"] == 0)
+    out["symbol_shapes"] = sorted(shapes)      # (pins, graphics); expect ONE
     out["ok"] = (not out["missing"] and not out["unexpected"]
-                 and fp_hits >= len(expected_names))
+                 and fp_hits >= len(expected_names)
+                 and not out["no_pins"] and len(shapes) == 1)
     return out

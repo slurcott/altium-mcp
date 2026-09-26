@@ -182,6 +182,14 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   SCHLIB to SYM-006-0000-2 / SYM-007-0001-2. Fix: copy child primitives explicitly (iterate the source's
   pins/graphics and AddSchObject a Replicate of each), and make verify() count pins + graphics per
   component (fail if any component has 0 pins).
+  **Fixed offline 2026-09-25 (needs one live scratch run).** Offline evidence (new
+  schdoc_file.read_ole_storage_streams + passive_schlib.component_record_counts): CAP-NP-2 replicas
+  kept 0 of 2 pins and 0 of 4 graphics; RES-2 replicas kept 2 of 4 pin records and lost the zigzag -
+  the "proven" 0402 trial was damaged too (workspace already repointed). SCRIPT now strips what
+  Replicate copied and adds Obj.Replicate of every Src pin/graphic (C.RemoveSchObject is NOT yet
+  verified in this Altium). verify() now fails on any 0-pin component or on more than one
+  (pins, graphics) shape across the lib. Live test: build a 3-row cap + 3-row res scratch lib, run
+  verify (expect ok, one shape), open one component in Altium to eyeball.
 - **B23 (2026-09-25) create_footprints_batch double-applied the library origin.** Spec coords given
   as raw library mils (50000-based, as get_footprint_primitives dumps them) landed at 100000 for
   CAPC1206(3216)190_L (50 in off origin -> "Offset Component Origin" at release). Fix: make the spec

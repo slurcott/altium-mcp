@@ -51,8 +51,13 @@ class Verify(unittest.TestCase):
     def test_verify_ok_and_missing(self):
         good = PS.verify(FIXTURE, ["RES 0402 10Ω 1%", "RES 0402 1kΩ 1%", "RES 0402 100kΩ 1%"],
                          "RESC0402(1005)_L", r"RMCF0402FT\w+")
-        self.assertTrue(good["ok"])
+        # names, footprint links and MPNs are all right ...
+        self.assertEqual((good["missing"], good["unexpected"]), ([], []))
         self.assertEqual(good["mpn_hits"], 3)
+        # ... but the fixture was built by the pre-B22 script: the replicated
+        # components lost the zigzag (and half the pin records), so it must FAIL
+        self.assertFalse(good["ok"])
+        self.assertGreater(len(good["symbol_shapes"]), 1)
         bad = PS.verify(FIXTURE, ["RES 0402 10Ω 1%", "RES 0402 4.7kΩ 1%"], "RESC0402(1005)_L")
         self.assertFalse(bad["ok"])
         self.assertEqual(bad["missing"], ["RES 0402 4.7kΩ 1%"])
@@ -77,4 +82,27 @@ class LongNameTest(unittest.TestCase):
                  "CAP 0805 2.2µF 50V X7R", "CAP 0805 4.7µF 50V X7R", "CAP 0805 10µF 10V X7R"]
         r = PS.verify(SERVER / "tests" / "fixtures" / "std_cap_0805_longname.SchLib", names,
                       "CAPC0805(2012)145_L")
-        self.assertTrue(r["ok"], r)
+        self.assertEqual((r["missing"], r["unexpected"]), ([], []), r)
+
+
+class EmptySymbolTest(unittest.TestCase):
+    """B22: the pre-fix script left every replicated CAP-NP-2 with NO pins."""
+    CAP = SERVER / "tests" / "fixtures" / "std_cap_0805_longname.SchLib"
+
+    def test_counts(self):
+        c = PS.component_record_counts(self.CAP)
+        self.assertEqual(c["CAP 0805 10µF 10V X7R"], {"pins": 2, "graphics": 4})   # the original
+        self.assertEqual(c["CAP 0805 100nF 50V X7R"], {"pins": 0, "graphics": 0})  # a replica
+
+    def test_verify_flags_empty_symbols(self):
+        names = ["CAP 0805 100nF 50V X7R", "CAP 0805 100nF 50V X7R flex-term", "CAP 0805 1µF 50V X7R",
+                 "CAP 0805 2.2µF 50V X7R", "CAP 0805 4.7µF 50V X7R", "CAP 0805 10µF 10V X7R"]
+        r = PS.verify(self.CAP, names, "CAPC0805(2012)145_L")
+        self.assertFalse(r["ok"])
+        self.assertEqual(len(r["no_pins"]), 5)
+        self.assertNotIn("CAP 0805 10µF 10V X7R", r["no_pins"])
+
+    def test_script_copies_children(self):
+        s = PS.render_script("C:\\x.SchLib", "FP")
+        self.assertIn("RemoveSchObject", s)
+        self.assertIn("C.AddSchObject(Obj.Replicate)", s)
