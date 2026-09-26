@@ -55,7 +55,24 @@ def on_interior(pt, seg):
     return False
 
 
-def build(recs):
+def _attach(dsu, segs, pt):
+    """Root of the wire cluster a point touches (endpoint or interior), or None."""
+    if ("pt",) + pt in dsu.p:
+        return dsu.find(("pt",) + pt)
+    for s in segs:
+        if on_interior(pt, s):
+            return dsu.find(("pt",) + s[:2])
+    return None
+
+
+def clusters(recs):
+    """Every connected cluster on one sheet, with ALL its names and pins.
+
+    Returns [{"names": [(priority, text, kind)], "pins": set("U1.3")}], including
+    clusters with names but no pins (e.g. a sheet entry wired straight to a port).
+    kind: power | port | label | entry. recs["ENTRY"] rows are [x, y, key]: sheet
+    entry connection points, which attach like a zero-width port.
+    """
     segs = [tuple(map(int, w)) for w in recs.get("WIRE", [])]
     juncs = {(int(j[0]), int(j[1])) for j in recs.get("JUNC", [])}
     pins = {}       # (desig, pin) -> (x, y)
@@ -86,57 +103,70 @@ def build(recs):
     for key, pt in pins.items():
         dsu.union(("pin",) + key, ("pt",) + pt)
 
+    # sheet-entry points are connection points too (a port may abut one with
+    # no wire between); register them before ports attach, like pin ends
+    entry_pts = [(int(a[0]), int(a[1]), a[2]) for a in recs.get("ENTRY", [])]
+    for x, y, _key in entry_pts:
+        if ("pt", x, y) not in dsu.p:
+            root = _attach(dsu, segs, (x, y))
+            dsu.find(("pt", x, y))
+            if root is not None:
+                dsu.union(("pt", x, y), root)
+
     # name clusters
-    names = defaultdict(list)   # root -> [(priority, name)]
+    names = defaultdict(list)   # root -> [(priority, name, kind)]
     for x, y, text, _style in ((int(a[0]), int(a[1]), a[2], a[3]) for a in recs.get("PWR", [])):
-        names[dsu.find(("pt", x, y))].append((0, text))
+        names[dsu.find(("pt", x, y))].append((0, text, "power"))
     # A port connects at whichever of its ends touches a wire: Location, or
-    # Location +/- Width along x (horizontal ports). Try each candidate as an
-    # exact wire-endpoint first, then as a segment-interior touch.
+    # Location +/- Width along x (horizontal ports, style 0-3) or along y
+    # (vertical ports, style 4-7). Try each candidate as an exact wire-endpoint
+    # first, then as a segment-interior touch.
     for rec in recs.get("PORT", []):
         x, y, text, w = int(rec[0]), int(rec[1]), rec[2], int(rec[5])
+        try:
+            vertical = int(rec[4] or 0) >= 4
+        except (ValueError, TypeError):
+            vertical = False
+        ends = ((x, y), (x, y + w), (x, y - w)) if vertical else ((x, y), (x + w, y), (x - w, y))
         attached = False
-        for cand in ((x, y), (x + w, y), (x - w, y)):
+        for cand in ends:
             if ("pt",) + cand in dsu.p:
-                names[dsu.find(("pt",) + cand)].append((1, text))
+                names[dsu.find(("pt",) + cand)].append((1, text, "port"))
                 attached = True
                 break
         if not attached:
-            for cand in ((x, y), (x + w, y), (x - w, y)):
+            for cand in ends:
                 for s_ in segs:
                     if on_interior(cand, s_):
-                        names[dsu.find(("pt",) + s_[:2])].append((1, text))
+                        names[dsu.find(("pt",) + s_[:2])].append((1, text, "port"))
                         attached = True
                         break
                 if attached:
                     break
+        if not attached:
+            names[("port", x, y, text)].append((1, text, "port"))   # port wired to nothing
     for x, y, text in ((int(a[0]), int(a[1]), a[2]) for a in recs.get("NLBL", [])):
-        pt = (x, y)
-        root = None
-        if ("pt",) + pt in dsu.p:
-            root = dsu.find(("pt",) + pt)
-        else:
-            for s in segs:
-                if on_interior(pt, s):
-                    root = dsu.find(("pt",) + s[:2])
-                    break
+        root = _attach(dsu, segs, (x, y))
         if root:
-            names[root].append((2, text))
+            names[root].append((2, text, "label"))
+    for x, y, key in entry_pts:
+        names[dsu.find(("pt", x, y))].append((3, key, "entry"))
 
-    nets = defaultdict(set)
+    members = defaultdict(set)
     for key in pins:
-        nets[dsu.find(("pin",) + key)].add(f"{key[0]}.{key[1]}")
+        members[dsu.find(("pin",) + key)].add(f"{key[0]}.{key[1]}")
+    roots = set(members) | set(names)
+    return [{"names": sorted(names.get(r, [])), "pins": members.get(r, set())} for r in roots]
 
+
+def build(recs):
     out = {}
-    anon = 0
-    for root, members in nets.items():
-        cands = sorted(names.get(root, []))
-        if cands:
-            name = cands[0][1]
-        else:
-            anon += 1
-            name = None
-        out.setdefault(name, []).append(sorted(members))
+    for c in clusters(recs):
+        if not c["pins"]:
+            continue
+        cands = [n for n in c["names"] if n[2] != "entry"]
+        name = cands[0][1] if cands else None
+        out.setdefault(name, []).append(sorted(c["pins"]))
 
     # flatten: named nets keyed by name (merging same-named clusters, since a
     # shared label means one net even without a drawn wire between clusters)

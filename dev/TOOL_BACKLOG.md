@@ -217,3 +217,12 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   baseline connectivity (the old script re-proposed every bridge wire on a fixed sheet); a part still
   wrong after one turn goes MANUAL instead of spinning. Smoke: released FE/TMC/fixture plan 0 lines,
   check IDENTICAL. dev/realign_swap.py is now a CLI over the module; realign_swap.pas removed.
+- **B25 (2026-09-26) Whole-project netlist, offline. DONE.** server/project_netlist.py + MCP tool
+  project_netlist: follows sheet symbols -> child sheets (channels named $Component_$RoomName),
+  entries <-> ports, power global, labels local, names case-insensitive, label/port named like a
+  power net joins it. compare_to a snapshot .PrjPcb or an IPC-2581 release file/zip. Validated: 0
+  grouping differences vs the IPC-2581 of two released boards; a 6-sheet hierarchical project with 13
+  channels resolves with no warnings. Fixes found on the way (dev/netlist.py): vertical ports
+  (style 4-7) attach along y; ports abutting sheet entries with no wire; pinless clusters kept
+  (clusters()); schdoc_file passes port iotype/style. build() output unchanged on 31 real sheets.
+  Open: Repeat() not expanded; duplicate symbol designators numbered in file order.

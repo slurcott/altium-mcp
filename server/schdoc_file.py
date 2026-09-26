@@ -224,7 +224,8 @@ class Sheet:
         self.netlabels = [self._text_obj(r) for r in self.records if _rtype(r) == REC_NETLABEL]
         self.power = [dict(self._text_obj(r), style=int(r.get("STYLE", "0") or 0))
                       for r in self.records if _rtype(r) == REC_POWER]
-        self.ports = [dict(self._text_obj(r), text=r.get("NAME", ""), width=_coord(r, "WIDTH"))
+        self.ports = [dict(self._text_obj(r), text=r.get("NAME", ""), width=_coord(r, "WIDTH"),
+                           iotype=int(r.get("IOTYPE", "0") or 0), style=int(r.get("STYLE", "0") or 0))
                       for r in self.records if _rtype(r) == REC_PORT]
         self.junctions = [(_coord(r, "LOCATION.X"), _coord(r, "LOCATION.Y"))
                           for r in self.records if _rtype(r) == REC_JUNCTION]
@@ -315,7 +316,8 @@ def sheet_records(sheet):
         for p in c["pins"]:
             recs["PIN"].append([c["designator"], p["designator"], r(p["hot_x"]), r(p["hot_y"])])
     recs["PWR"] = [[r(o["x"]), r(o["y"]), o["text"], o.get("style", 0)] for o in sheet.power]
-    recs["PORT"] = [[r(o["x"]), r(o["y"]), o["text"], 0, 0, r(o.get("width", 0))] for o in sheet.ports]
+    recs["PORT"] = [[r(o["x"]), r(o["y"]), o["text"], o.get("iotype", 0), o.get("style", 0),
+                     r(o.get("width", 0))] for o in sheet.ports]
     recs["NLBL"] = [[r(o["x"]), r(o["y"]), o["text"]] for o in sheet.netlabels]
     return recs
 

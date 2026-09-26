@@ -2926,6 +2926,73 @@ async def build_passive_schlib(ctx: Context, template_schlib: str, out_schlib: s
 
 
 @mcp.tool()
+async def project_netlist(ctx: Context, project: str, net: str = None, designators: list = None,
+                          compare_to: str = None, max_nets: int = 300) -> str:
+    """
+    Whole-project netlist straight from the SAVED sheets - no Altium, no compile,
+    safe at any time (reads files only; save first if Altium has unsaved edits).
+
+    Follows the hierarchy the way Altium does: sheet symbols -> child sheets,
+    sheet entries <-> child ports, power ports global, net labels local per sheet
+    instance, names case-insensitive, a label/port named like a power net joins
+    it. A sheet placed by several symbols becomes channels named
+    $Component_$RoomName (Q4_M3). Validated 2026-09-26: 0 grouping differences
+    against the IPC-2581 netlists of two released boards.
+
+    Use it to: trace a signal across sheets, review a design (warnings list
+    entries without ports and vice versa), prove an edit changed only what it
+    should (compare_to a snapshot of the project), or check the schematic still
+    matches a released board (compare_to the release .zip / IPC-2581 file).
+
+    Args:
+        project (str): the .PrjPcb.
+        net (str): only nets whose name contains this (case-insensitive).
+        designators (list): only nets touching these parts (e.g. ["U26", "Q4_M1"]).
+        compare_to (str): a baseline .PrjPcb (e.g. a pre-edit copy) or an IPC-2581
+            file / release .zip. Compared on the pins both contain; lists every
+            pin whose net membership differs.
+        max_nets (int): cap on nets returned (summary is always returned).
+
+    Returns:
+        str: JSON with mode, top, instances, warnings, counts, nets (filtered),
+        single_pin (pins alone on a net, excluding test points/fiducials), and
+        comparison when compare_to is given.
+    """
+    import project_netlist as PN
+    try:
+        r = PN.build(project)
+        nets = r["nets"]
+        out = {"success": True, "mode": r["mode"], "top": r["top"],
+               "instances": len(r["instances"]), "net_count": len(nets),
+               "warnings": r["warnings"]}
+        out["single_pin"] = sorted(n["pins"][0] for n in nets if len(n["pins"]) == 1
+                                   and not n["pins"][0].upper().startswith(("TP", "FD")))
+        sel = nets
+        if net:
+            sel = [n for n in sel if any(net.lower() in x.lower() for x in n["names"])]
+        if designators:
+            want = set(designators)
+            sel = [n for n in sel if any(p.rsplit(".", 1)[0] in want for p in n["pins"])]
+        out["nets"] = sel[:max_nets]
+        if len(sel) > max_nets:
+            out["nets_truncated"] = len(sel)
+        if compare_to:
+            ref = compare_to.lower()
+            other = (PN.build(compare_to)["nets"] if ref.endswith(".prjpcb")
+                     else PN.ipc2581_nets(compare_to))
+            c = PN.compare(nets, other)
+            out["comparison"] = {"against": compare_to,
+                                 "identical": not c["differences"],
+                                 "differences": c["differences"][:100],
+                                 "difference_count": len(c["differences"]),
+                                 "only_in_project": c["only_in_first"][:100],
+                                 "only_in_reference": c["only_in_second"][:100]}
+    except (OSError, ValueError, KeyError) as e:
+        return json.dumps({"success": False, "error": str(e)})
+    return json.dumps(out, indent=1)
+
+
+@mcp.tool()
 async def realign_swapped_parts(ctx: Context, project: str, baseline_dir: str,
                                 apply: bool = False, only: list = None,
                                 max_passes: int = 3) -> str:
