@@ -1,15 +1,15 @@
 """Offline helpers for create_footprints_batch spec files (B23).
 
-create_footprints_batch places coordinates exactly as given, relative to the
-library's absolute zero, NOT to the library origin (a PcbLib's origin usually
-sits at 50000,50000 mil raw). A spec written origin-relative therefore lands
-50000 mil away from the origin, and Altium's import warns "Offset Component
-Origin". These helpers:
+create_footprints_batch takes coordinates RELATIVE TO THE LIBRARY ORIGIN (proven live
+2026-09-26: a spec written 50000-based - the origin's raw value - landed 50000 mil off,
+read back from the saved .PcbLib, where pads are stored origin-relative). So a footprint
+centred on its origin has pads centred on 0,0 in the spec. (The earlier belief that the
+spec is raw came from Altium's own primitive dump, which reports absolute coordinates.)
+These helpers:
 
   * resolve the FPLIB path (the C:\\Users\\Steve junction and the real path
     are the same file; opening it under both names gives two live copies), and
-  * compute each footprint's pad-extent centre from the spec, so the result can
-    be checked against the library origin that the script reports back.
+  * compute each footprint's pad-extent centre from the spec - it must be ~0,0.
 """
 import os
 import tempfile
@@ -69,8 +69,9 @@ def pad_centres(spec_text):
     return out
 
 
-def off_origin(centres, origin_x, origin_y, tol=TOL_MILS):
-    """Footprints whose pad centre is not on the library origin.
+def off_origin(centres, origin_x=0.0, origin_y=0.0, tol=TOL_MILS):
+    """Footprints whose pad centre is not on the footprint origin (spec coords are
+    origin-relative, so the target is 0,0 - pass the origin only for raw specs).
 
     Returns a list of {name, dx, dy} (mils, centre minus origin). Footprints
     that are deliberately asymmetric (e.g. pin 1 at origin) will show here too;

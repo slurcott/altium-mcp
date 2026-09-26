@@ -28,14 +28,15 @@ class PadCentreTest(unittest.TestCase):
         self.assertEqual(c["T_C_REL"], (0.0, 0.0))
         self.assertNotIn("NO_PADS", c)
 
-    def test_off_origin_flags_relative_spec(self):
-        bad = F.off_origin(F.pad_centres(SPEC), 50000, 50000)
-        self.assertEqual([b["name"] for b in bad], ["T_C_REL"])
-        self.assertEqual((bad[0]["dx"], bad[0]["dy"]), (-50000.0, -50000.0))
+    def test_off_origin_flags_raw_spec(self):
+        # spec coords are origin-relative: the 50000-based footprint is the wrong one
+        bad = F.off_origin(F.pad_centres(SPEC))
+        self.assertEqual([b["name"] for b in bad], ["T_A_RAW"])
+        self.assertEqual((bad[0]["dx"], bad[0]["dy"]), (50000.0, 50000.0))
 
     def test_tolerance(self):
-        self.assertEqual(F.off_origin({"X": (50000.5, 49999.5)}, 50000, 50000), [])
-        self.assertEqual(len(F.off_origin({"X": (50002, 50000)}, 50000, 50000)), 1)
+        self.assertEqual(F.off_origin({"X": (0.5, -0.5)}), [])
+        self.assertEqual(len(F.off_origin({"X": (2, 0)})), 1)
 
 
 class ResolveTest(unittest.TestCase):

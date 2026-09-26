@@ -1422,10 +1422,12 @@ async def create_footprints_batch(ctx: Context, spec_file: str) -> str:
             TEXT|x|y|size|width|rotation|layer|mirror|ttf|text
             REGION|layer|kind|x1|y1|x2|y2|...
 
-        Coordinates are RAW library coordinates, not origin-relative: a
-        PcbLib's origin is usually at 50000,50000, so pads centred on the
-        origin are written around 50000,50000 (get_footprint_primitives dumps
-        the same raw frame, so dump -> create round-trips).
+        Coordinates are RELATIVE TO THE LIBRARY ORIGIN: a footprint centred on
+        its origin has pads centred on 0,0 (proven live 2026-09-26 from the saved
+        file). Do NOT add the origin's raw value (usually 50000,50000) - that
+        lands the footprint 50000 mil off ("Offset Component Origin").
+        get_footprint_primitives dumps ABSOLUTE coordinates: subtract the
+        library origin before reusing a dump as a spec.
 
     Returns:
         str: JSON with created count, primitive_errors, failed names, the
@@ -1462,8 +1464,7 @@ async def create_footprints_batch(ctx: Context, spec_file: str) -> str:
     if "origin_x" in result and "origin_y" in result:
         with open(spec_file, encoding="cp1252") as f:
             centres = footprint_spec.pad_centres(f.read())
-        result["off_origin"] = footprint_spec.off_origin(
-            centres, result["origin_x"], result["origin_y"])
+        result["off_origin"] = footprint_spec.off_origin(centres)   # target 0,0
     return json.dumps(result, indent=2)
 
 @mcp.tool()

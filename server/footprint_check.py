@@ -302,7 +302,9 @@ def render_overlay(fp, spec, out_png, px_per_mm=120, title=None):
     from PIL import Image, ImageDraw
     actual = footprint_pads(fp)
     expected, _ = expected_pads(spec)
-    t = best_transform(expected, actual)
+    # align exactly as check() does: one (largest) pad per name on BOTH sides - pairing
+    # every same-named sub-pad with the footprint's largest skews the fit
+    t = best_transform(list(_signal_pads(expected).values()), actual)
     cx, cy = t["centre"]
     exp = []
     for p in expected:

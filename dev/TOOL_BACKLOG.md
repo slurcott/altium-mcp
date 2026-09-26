@@ -248,3 +248,10 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   server/sheet_copy.py + copy_sheet: copy a sheet to a NEW file, rename ports (+IO types), reset only
   letters+number designators (named ones like TP_5v0 / R_S3 kept - the trap found by hand), save, read the
   netlist back. Every API call in its script was used live on 2026-09-26.
+- **B23 CORRECTED (2026-09-26 pm, live proof).** create_footprints_batch takes coordinates RELATIVE TO THE
+  LIBRARY ORIGIN. A 50000-based spec (origin's raw value) landed the new OV4F Q3 footprint 50000 mil off,
+  read back from the saved .PcbLib (pads are stored origin-relative). The morning conclusion ("create uses
+  raw coords") came from get_footprint_primitives, which dumps ABSOLUTE coords - subtract the origin before
+  reusing a dump as a spec. off_origin now targets 0,0; docstrings fixed. The Altium-side origin report
+  (pcb_utils.pas) ran fine live. Recovery used: IPCB_Primitive.MoveByXY on each primitive of the one
+  footprint (index-walk with a fresh GroupIterator per primitive; no TStringList.AddObject - unverified).
