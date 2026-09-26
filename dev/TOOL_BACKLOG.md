@@ -239,3 +239,8 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   method validated: TPSM33610 RDN0011B drawing read = keypad footprint; TPSM365R6 RDN0011A PASS on it.
   NEXT: land pattern FROM A DRAWING (screenshot -> dims -> pads, with a rendered
   preview to confirm the read); symbol-pin vs pad cross-check; spec -> create_footprints_batch.
+- **B27 (2026-09-26) Custom-shape pads.** Altium pads can have a Custom shape (outline-defined). The
+  PcbLib/PcbDoc reader does not decode them yet (it does decode component copper REGIONS, used by older
+  footprints such as LFPAK56 drains). Decode the custom outline, treat it like a region in check/overlay;
+  and probe the API to CREATE custom pads from create_footprints_batch (unverified - needs a sandbox probe).
+  Use case: dual LFPAK56 / PowerPAK SO-8L footprint for the OV4F keypad Q3.
