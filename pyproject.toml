@@ -8,4 +8,5 @@ dependencies = [
     "mcp[cli]>=1.5.0",
     "pillow>=11.1.0",
     "pywin32>=310",
+    "pypdfium2>=4.30",
 ]

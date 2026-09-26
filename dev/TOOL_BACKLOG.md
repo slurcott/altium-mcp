@@ -234,5 +234,8 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   check). FAIL: pin set, mirror, pitch, lead miss, small/missing EP; WARN: origin offset, IPC size,
   mask sliver, pin-1 silk. B23 root cause found with it: pads are stored relative to each library's
   origin, and a new blank library's origin differs from a downloaded one.
-  NEXT: MCP tool wrapper; land pattern FROM A DRAWING (screenshot -> dims -> pads, with a rendered
+  DONE 2026-09-26 (later): MCP tools check_footprint (+ overlay PNG: green datasheet / red copper) and
+  datasheet_drawing_pages (pypdfium2 renders PDF drawing pages to PNG - new dependency). Drawing-read
+  method validated: TPSM33610 RDN0011B drawing read = keypad footprint; TPSM365R6 RDN0011A PASS on it.
+  NEXT: land pattern FROM A DRAWING (screenshot -> dims -> pads, with a rendered
   preview to confirm the read); symbol-pin vs pad cross-check; spec -> create_footprints_batch.

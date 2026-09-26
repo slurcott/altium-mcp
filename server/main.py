@@ -2926,6 +2926,104 @@ async def build_passive_schlib(ctx: Context, template_schlib: str, out_schlib: s
 
 
 @mcp.tool()
+async def datasheet_drawing_pages(ctx: Context, pdf: str, pages: list = None, out_dir: str = None,
+                                  scale: float = 3.0) -> str:
+    """
+    Find and render a datasheet's package / land-pattern drawing pages to PNG, so they
+    can be READ AS IMAGES (no poppler needed; pypdfium2). Offline, no Altium.
+
+    Step 1 of "footprint from a drawing": call with no pages to list candidate pages
+    (EXAMPLE BOARD LAYOUT / LAND PATTERN / PACKAGE OUTLINE / ...), then with pages=[..]
+    to render them; open the PNGs and read the dimensions. Watch for: mm vs inch
+    columns, BSC vs min/max, centre vs edge dimensions, top vs bottom view, which
+    package variant the orderable part uses (the drawing's package code, e.g. RDN0011A).
+
+    Args:
+        pdf (str): datasheet PDF path.
+        pages (list): 1-based page numbers to render; omit to only list candidates.
+        out_dir (str): where PNGs go (default: next to the PDF, in <name>_pages/).
+        scale (float): render scale (3 = ~216 dpi).
+
+    Returns:
+        str: JSON with candidates [[page, headings]] and rendered [{page, png, size}].
+    """
+    import pdf_render as PR
+    try:
+        out = {"success": True, "candidates": PR.find_drawing_pages(pdf)}
+        if pages:
+            d = Path(out_dir) if out_dir else Path(pdf).with_suffix("").parent / (Path(pdf).stem + "_pages")
+            out["rendered"] = []
+            for pg in pages:
+                png, size = PR.render(pdf, int(pg), d / f"p{int(pg)}.png", scale=scale)
+                out["rendered"].append({"page": int(pg), "png": png, "size": size})
+    except Exception as e:      # pypdfium2 raises its own error types
+        return json.dumps({"success": False, "error": str(e)})
+    return json.dumps(out, indent=1)
+
+
+@mcp.tool()
+async def check_footprint(ctx: Context, pcblib: str, spec: dict = None, spec_file: str = None,
+                          footprint: str = None, overlay_png: str = None) -> str:
+    """
+    Check an IC footprint in a SAVED .PcbLib against its datasheet - offline, no Altium.
+
+    The spec (mm, origin = package centre) is written from the datasheet drawing
+    (see datasheet_drawing_pages), in one of two forms:
+      {"land_pattern": [{"name": "1", "x": .., "y": .., "w": .., "h": ..}, ...]}
+          the datasheet's recommended land pattern; positions are HARD checks.
+      {"package": "dual"|"quad", "style": "gullwing"|"nolead", "pins": N, "pitch": e,
+       "span": [min, max], "lead_length": [min, max], "lead_width": [min, max],
+       "epad": [w, h], "epad_name": "9"}
+          package dimensions; JEDEC counter-clockwise numbering, pin 1 top-left;
+          lead-on-pad coverage is the hard check, IPC-7351B nominal is advisory.
+
+    FAIL: pins missing, mirrored pinout, wrong pitch, a lead that misses its pad,
+    exposed pad missing/too small, land-pattern pad out of position. WARN: origin not
+    at the package centre ("Offset Component Origin"), IPC size deviation, solder-mask
+    sliver < 0.15 mm, no pin-1 silk mark. Split pads sharing a name are judged by the
+    largest. Rotations are allowed and reported.
+
+    ALWAYS ask for overlay_png and look at it: green = datasheet pads, red = footprint
+    copper, blue + = package centre. It is the check on the drawing read itself; if the
+    overlay and the drawing disagree, re-read the drawing - and if it stays ambiguous,
+    ask the user.
+
+    Args:
+        pcblib (str): .PcbLib path.
+        spec (dict) / spec_file (str): the package spec (inline or a JSON file).
+        footprint (str): footprint name (default: the only footprint with pads).
+        overlay_png (str): write the overlay image here (needs Pillow - server venv has it).
+
+    Returns:
+        str: JSON with verdict, failures, warnings, info (orientation, origin offset,
+        min pad gap), and the overlay path.
+    """
+    import pcblib_file as PF
+    import footprint_check as FC
+    try:
+        if spec is None:
+            with open(spec_file, encoding="utf-8") as f:
+                spec = json.load(f)
+        lib = {k: v for k, v in PF.read_pcblib(pcblib).items() if v.get("pads")}
+        if footprint:
+            fps = [v for v in lib.values() if v["name"] == footprint]
+        else:
+            fps = list(lib.values())
+        if len(fps) != 1:
+            return json.dumps({"success": False,
+                               "error": "name the footprint" if fps else "footprint not found",
+                               "footprints": sorted(v["name"] for v in lib.values())})
+        r = FC.check(fps[0], spec)
+        r["footprint"] = fps[0]["name"]
+        if overlay_png:
+            r["overlay_png"] = FC.render_overlay(fps[0], spec, overlay_png)
+        r["success"] = True
+    except (OSError, ValueError, KeyError) as e:
+        return json.dumps({"success": False, "error": str(e)})
+    return json.dumps(r, indent=1)
+
+
+@mcp.tool()
 async def project_netlist(ctx: Context, project: str, net: str = None, designators: list = None,
                           compare_to: str = None, max_nets: int = 300) -> str:
     """

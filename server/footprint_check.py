@@ -143,24 +143,32 @@ def _tf(x, y, rot, mirror):
 
 def best_transform(expected, actual):
     """Rotation/mirror of the expected pattern that best lands on the footprint, by pad name."""
+    # For each rotation/mirror, the best-fit shift (mean of matched-pad differences) is
+    # where the datasheet's package centre lands in footprint coordinates - for an
+    # asymmetric part that is NOT the pad centroid. "centre" = that shift.
     act = _signal_pads(actual)
-    cx = sum(p["x"] for p in act.values()) / max(len(act), 1)
-    cy = sum(p["y"] for p in act.values()) / max(len(act), 1)
     best = None
     for rot, mir in TRANSFORMS:
-        err, hits = 0.0, 0
+        pairs = []
         for p in expected:
             a = act.get(p["name"])
-            if a is None:
-                continue
-            x, y = _tf(p["x"], p["y"], rot, mir)
-            d = math.hypot(a["x"] - cx - x, a["y"] - cy - y)
+            if a is not None:
+                pairs.append((a, _tf(p["x"], p["y"], rot, mir)))
+        if not pairs:
+            continue
+        ox = sum(a["x"] - x for a, (x, y) in pairs) / len(pairs)
+        oy = sum(a["y"] - y for a, (x, y) in pairs) / len(pairs)
+        err, hits = 0.0, 0
+        for a, (x, y) in pairs:
+            d = math.hypot(a["x"] - ox - x, a["y"] - oy - y)
             err += d
             hits += d <= TOL_POS
         key = (-hits, err)
         if best is None or key < best[0]:
-            best = (key, rot, mir)
-    return {"rotation": best[1], "mirror": best[2], "centre": (cx, cy)}
+            best = (key, rot, mir, (ox, oy))
+    if best is None:
+        return {"rotation": 0, "mirror": False, "centre": (0.0, 0.0)}
+    return {"rotation": best[1], "mirror": best[2], "centre": best[3]}
 
 
 # ------------------------------------------------------------------ the check
@@ -188,9 +196,10 @@ def check(fp, spec, silk_marker_radius=1.5):
     if t["mirror"]:
         fails.append("pinout is MIRRORED relative to the datasheet (top view vs bottom view?)")
     cx, cy = t["centre"]
+    info["origin_offset_mm"] = (round(cx, 3), round(cy, 3))
     if math.hypot(cx, cy) > 0.05:
-        warns.append(f"pads not centred on the footprint origin: centre at ({cx:.3f}, {cy:.3f}) mm "
-                     "- Altium release flags 'Offset Component Origin'")
+        warns.append(f"footprint origin is not at the datasheet package centre: the package centre sits at "
+                     f"({cx:.3f}, {cy:.3f}) mm - Altium release flags 'Offset Component Origin'")
 
     pos_bad, size_warn = [], []
     for p in expected:
@@ -281,6 +290,52 @@ def check(fp, spec, silk_marker_radius=1.5):
             warns.append("no silkscreen within 1.5 mm of pin 1 - is there a pin-1 marker?")
 
     return {"verdict": "FAIL" if fails else "PASS", "failures": fails, "warnings": warns, "info": info}
+
+
+def render_overlay(fp, spec, out_png, px_per_mm=120, title=None):
+    """PNG: footprint copper (red fill) under the datasheet pattern (green outline), aligned
+    exactly as check() aligns them. For eyeballing a drawing read against the drawing.
+    Needs Pillow (the MCP server venv has it)."""
+    from PIL import Image, ImageDraw
+    actual = footprint_pads(fp)
+    expected, _ = expected_pads(spec)
+    t = best_transform(expected, actual)
+    cx, cy = t["centre"]
+    exp = []
+    for p in expected:
+        x, y = _tf(p["x"], p["y"], t["rotation"], t["mirror"])
+        w, h = (p["w"], p["h"]) if t["rotation"] % 180 == 0 else (p["h"], p["w"])
+        exp.append({"name": p["name"], "x": x, "y": y, "w": w, "h": h})
+    act = [dict(p, x=p["x"] - cx, y=p["y"] - cy) for p in actual]
+    allp = exp + act
+    minx = min(p["x"] - p["w"] / 2 for p in allp) - 0.6
+    maxx = max(p["x"] + p["w"] / 2 for p in allp) + 0.6
+    miny = min(p["y"] - p["h"] / 2 for p in allp) - 0.6
+    maxy = max(p["y"] + p["h"] / 2 for p in allp) + 0.9
+    W, H = int((maxx - minx) * px_per_mm), int((maxy - miny) * px_per_mm)
+    img = Image.new("RGB", (W, H), "white")
+    d = ImageDraw.Draw(img, "RGBA")
+
+    def box(p):
+        return ((p["x"] - p["w"] / 2 - minx) * px_per_mm, (maxy - (p["y"] + p["h"] / 2)) * px_per_mm,
+                (p["x"] + p["w"] / 2 - minx) * px_per_mm, (maxy - (p["y"] - p["h"] / 2)) * px_per_mm)
+
+    for p in act:
+        d.rectangle(box(p), fill=(220, 40, 40, 110))
+    for p in exp:
+        d.rectangle(box(p), outline=(0, 150, 0, 255), width=3)
+        bx = box(p)
+        d.text(((bx[0] + bx[2]) / 2 - 4, (bx[1] + bx[3]) / 2 - 6), p["name"], fill=(0, 0, 0))
+    ox, oy = (0 - minx) * px_per_mm, (maxy - 0) * px_per_mm
+    d.line((ox - 12, oy, ox + 12, oy), fill=(0, 0, 255), width=2)
+    d.line((ox, oy - 12, ox, oy + 12), fill=(0, 0, 255), width=2)
+    # 1 mm scale bar
+    d.line((10, H - 12, 10 + px_per_mm, H - 12), fill=(0, 0, 0), width=3)
+    d.text((14, H - 30), "1 mm", fill=(0, 0, 0))
+    d.text((10, 6), (title or fp.get("name", "")) + "   green = datasheet, red = footprint, blue + = package centre",
+           fill=(0, 0, 0))
+    img.save(out_png)
+    return str(out_png)
 
 
 def _natural(s):
