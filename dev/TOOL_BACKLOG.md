@@ -268,3 +268,26 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   shorten sensitive nets - respecting fixed parts (connectors, holes), outline, keep-outs, side. (3) APPLY via
   place_components / layout_duplicator, re-score. Priority: power loops > clocks > sensitive/analog > bus
   protection at connector > rest. Not a full autoplacer. First trial: OV4F keypad A_9.
+
+## ROADMAP (agreed with Steve 2026-09-27) - outcome-driven, from the failure history
+Evidence: most past losses were "right parts, wrong connection/assumption, caught late" (keypad CAN TX pin,
+TCAN3414 5 V into 3.3 V, USB ESD on CAN, TVS clamp > regulator abs max, Q1 gate no pull-up, WP floating,
+J1<->P3 24 V slip, TP_5v/TP_5v0 sch-PCB drift, 1206 origin, pins 33/59 hw/fw mismatch). Few were layout quality.
+Challenges accepted: B30 placement scoring kept SMALL (critical loops/sensitive nets only); checks need a
+structured per-project INTENT file (rails + max/surge V, off-board ports, sensitive nets, system bus V); all
+hardware projects in git; promote ~/.ov4fb validations to a PRIVATE regression suite on real boards.
+ Tier 1 (next, in order):
+  R1 ERC++ rule engine over project_netlist + part data: net name vs pin function; voltage domains / auto rail
+     map; protection part vs port class; cap/FET voltage vs net max; gates/enables without pull; floating
+     inputs (WP/EN/MCLR). + intent file (draft for the keypad first).
+  R2 firmware <-> schematic pin check: MCC plib_gpio.h pin names vs the net on that physical pin (FE + keypad).
+  R3 pre-release command: sch<->PCB sync, DRC results, BOM completeness + Comment sanity, check_footprint on
+     every IC, fab notes vs stackup -> one release-readiness report.
+  R4 change report: "what changed A_8 -> A_9" in plain language from the netlist diff (for Steve/CM/client).
+ Tier 2: R5 board-to-board interface checker (FE J1<->TMC P3, fixture pogos<->TPs, keypad<->ECU; multiboard
+     project PRJT-0001); R6 parts knowledge cache per MPN from datasheets (pins, abs max, package code, land
+     pattern spec, temp grade), reused across projects.
+ Tier 3: R7 design -> bring-up test (rail map + TP list -> expected V/limits -> bench-tools + fixture);
+     R8 LTspice snippets from the netlist for small blocks (input filters, soft-start).
+ Tier 4: R9 re-check on every save (file watcher / git hook) once R1 is quiet; R10 = B30 (small).
+ Prerequisite: OV4F keypad hardware into git (done 2026-09-27).
