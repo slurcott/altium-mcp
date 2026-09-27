@@ -260,3 +260,11 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   lint + wedge detection + archive); Route B offline readers (SchDoc/SchLib/PcbLib/PcbDoc/IPC-2581/PDF);
   verification layer (netlist diff, realign proof, footprint check + overlay); compound workflows; process
   (backlog, tests, dev worktree -> live checkout, skills, memory). Build it as a published artifact page.
+- **B30 (2026-09-27, outlook) Placement scoring + suggestions.** Steve: placement is key to a good layout -
+  minimise tracks and crossings, shortest paths, especially sensitive signals. Stages: (1) SCORE a placement
+  offline from the PcbDoc + project netlist: total airline length, airline CROSSINGS, per-net length for
+  sensitive classes (crystal, CAN, feedback, analog), decoupling cap-to-pin distance, switcher loop area;
+  before/after deltas. (2) SUGGEST approved moves: rotate/flip to uncross, pin/gate swaps, pull caps to pins,
+  shorten sensitive nets - respecting fixed parts (connectors, holes), outline, keep-outs, side. (3) APPLY via
+  place_components / layout_duplicator, re-score. Priority: power loops > clocks > sensitive/analog > bus
+  protection at connector > rest. Not a full autoplacer. First trial: OV4F keypad A_9.
