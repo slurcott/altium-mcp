@@ -291,3 +291,16 @@ hardware projects in git; promote ~/.ov4fb validations to a PRIVATE regression s
      R8 LTspice snippets from the netlist for small blocks (input filters, soft-start).
  Tier 4: R9 re-check on every save (file watcher / git hook) once R1 is quiet; R10 = B30 (small).
  Prerequisite: OV4F keypad hardware into git (done 2026-09-27).
+- **R2 EXPANDED (2026-09-27): MCC <-> schematic PIN SYNC workflow** (Steve: he switches between MCC and the
+  schematic editor to get pin assignments right). Convention: MCC pin NAME == schematic NET name.
+  MCC (Harmony) stores pins in `config.mcc/mcc/config.mcc_default/components/core.yml`
+  (BSP_PIN_<n>_FUNCTION_NAME / _FUNCTION_TYPE, e.g. pin 59 = CanTx / C1TX). Modes:
+   (1) CHECK - prototype `~/.ov4fb/mcc_vs_sch.py` (core.yml vs project_netlist at the MCU + symbol pin names as
+       capability list; skips supply/dedicated pins). PROVEN: on the pre-fix keypad A_8 it flags the pin 33/59
+       swap at once; on the current keypad only nBtnCntr vs nBtnCenter + spare RE3. Promote to an MCP tool.
+   (2) schematic -> MCC: write names + inferred functions into core.yml with MCC closed (trial on a copy first:
+       does MCC accept an edited core.yml?).
+   (3) MCC -> schematic: rename MCU-side labels/ports to MCC names (port rename is proven) or a checklist.
+   (4) PIN PLANNER for new designs: required functions list + device-pack pin capabilities (remappable, 5 V
+       tolerant, analog) + placement hint (exit toward the destination) -> proposed map -> push both ways.
+  Applies to FE (PIC32CM, Harmony) and keypad (PIC32MX).
