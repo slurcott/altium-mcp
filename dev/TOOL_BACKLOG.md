@@ -255,3 +255,8 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   reusing a dump as a spec. off_origin now targets 0,0; docstrings fixed. The Altium-side origin report
   (pcb_utils.pas) ran fine live. Recovery used: IPCB_Primitive.MoveByXY on each primitive of the one
   footprint (index-walk with a fresh GroupIterator per primitive; no TStringList.AddObject - unverified).
+- **B29 (2026-09-27) Architecture diagram when the tool settles (Steve asked).** One page: Claude <-> MCP
+  server; Route A live bridge (request/response files, DelphiScript in Altium, sandbox, guard: preflight +
+  lint + wedge detection + archive); Route B offline readers (SchDoc/SchLib/PcbLib/PcbDoc/IPC-2581/PDF);
+  verification layer (netlist diff, realign proof, footprint check + overlay); compound workflows; process
+  (backlog, tests, dev worktree -> live checkout, skills, memory). Build it as a published artifact page.
