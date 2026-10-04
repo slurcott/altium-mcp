@@ -1150,9 +1150,16 @@ async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 12
         script (str): DelphiScript statements to execute (body only), optionally
             preceded by a `var` block.
         timeout_seconds (int): How long to wait for completion (default 120).
-        allow_new_api (list): names you are deliberately probing that no script
-            has used yet - members (.Foo) or global constants/functions (e.g.
-            SCHM_BeginModify). Probe new names in a short script of their own.
+        allow_new_api (list): a LIST of names (not true/false) you are deliberately
+            probing that no script has used yet - members (.Foo) or global
+            constants/functions (e.g. SCHM_BeginModify), e.g.
+            allow_new_api=["Description", "BoundingRectangle"]. Probe new names in a
+            short script of their own.
+        Focus: the script acts on whatever document is focused in Altium. Focus the
+            board first (e.g. pcb_query(doc_path=...)) - with a report or other
+            non-PCB tab focused, board scripts have paused the engine (B32).
+        Writes: never modify or save a document the user is working in; an edit or
+            save during the user's interactive command locked Altium's saves (B31).
         lint (bool): set False only to bypass the linter when it is wrong - and
             say so, so the corpus can be fixed.
 
@@ -3250,7 +3257,23 @@ async def save_doc(ctx: Context, doc_path: str) -> str:
     # cp1252: the bridge reads spec files as ANSI
     spec.write_text(f"KIND|{kind}\nPATH|{path}\n", encoding="cp1252", errors="replace")
 
-    response = await altium_bridge.execute_command("save_doc", {})
+    # B31: if the user has an interactive command running, Altium answers the save with a modal
+    # "A command is currently active and save cannot be completed. Save a copy?" and the call
+    # blocks until timeout. Watch for that box, answer No, and refuse instead of hanging.
+    task = asyncio.create_task(altium_bridge.execute_command("save_doc", {}))
+    blocked = []
+    while not task.done():
+        await asyncio.sleep(0.5)
+        blocked += altium_guard.close_dialogs_containing("command is currently active")
+    response = await task
+    if blocked:
+        return json.dumps({
+            "success": False, "saved": False, "refused": "command_active",
+            "error": ("Altium has an interactive command running (move, route, select...), so it "
+                      "refused to save and offered 'save a copy'; that box was answered No. Ask the "
+                      "user to press Esc in the PCB window and save with Ctrl+S themselves. Do not "
+                      "retry from a script while they are working (backlog B31)."),
+            "dialog": blocked[0][1][:300]}, indent=2)
     if not response.get("success", False):
         return json.dumps({"success": False, "saved": False,
                            "error": response.get("error", "unknown error")}, indent=2)
@@ -3285,6 +3308,59 @@ async def get_server_status(ctx: Context) -> str:
     }
     
     return json.dumps(status, indent=2)
+
+
+@mcp.tool()
+async def drc_report(ctx: Context, path: str, rule: str = None, max_lines: int = 60) -> str:
+    """
+    Read a SAVED Altium DRC report offline - per-rule violation counts and the violation lines.
+    Never touches Altium (safe while the user works). Run Tools > Design Rule Check with
+    "Create Report File" first; this reads what that run wrote.
+
+    Args:
+        path (str): the .drc report, OR a .PrjPcb / .PcbDoc - then the newest .drc in its
+            "Project Outputs for *" folder is used.
+        rule (str): only rules whose descriptor contains this text (e.g. "Clearance", "Short").
+        max_lines (int): violation lines returned per rule (count is always complete).
+
+    Returns:
+        str: JSON with report path, when it was written, total, and rules_with_violations.
+    """
+    import drc_report as _drc
+    p = path if path.lower().endswith(".drc") else _drc.find_report(path)
+    if not p or not os.path.exists(p):
+        return json.dumps({"success": False, "error": f"no .drc report found for {path}"})
+    return json.dumps({"success": True, **_drc.parse(p, rule, max_lines)}, indent=1)
+
+
+@mcp.tool()
+async def pcb_net_check(ctx: Context, doc_path: str, nets: list, clearance_mils: float = 8.0) -> str:
+    """
+    Check routed nets on a SAVED .PcbDoc offline: is each net one connected island of copper
+    (else which pads are separated), its length, layers, widths and vias, and every place its
+    tracks come closer than clearance_mils to copper of a net NOT in the list. Never touches
+    Altium. Use after routing a group of nets, before the full DRC. Nets in the list are not
+    checked against each other (DRC does that).
+
+    Args:
+        doc_path (str): the .PcbDoc (reads the last save).
+        nets (list): net names, e.g. ["SDA", "SCL"].
+        clearance_mils (float): near-miss threshold.
+    """
+    import pcb_nets
+    return json.dumps({"success": True, **pcb_nets.net_check(doc_path, nets, clearance_mils)}, indent=1)
+
+
+@mcp.tool()
+async def pcb_padnet_diff(ctx: Context, before: str, after: str) -> str:
+    """
+    Prove an ECO / Update PCB / pin swap changed only what it should: pad-by-pad net comparison of
+    two SAVED .PcbDoc files (parts added/removed + every pad whose net changed). Offline.
+    Get the "before" from git: git show HEAD:"<board>.PcbDoc" > before.PcbDoc.
+    """
+    import pcb_nets
+    return json.dumps({"success": True, **pcb_nets.padnet_diff(before, after)}, indent=1)
+
 
 if __name__ == "__main__":
     logger.info("Starting Altium MCP Server...")

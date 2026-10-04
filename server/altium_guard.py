@@ -266,6 +266,39 @@ def _button_count(hwnd):
     return n[0]
 
 
+def dialog_text(hwnd):
+    """Concatenated text of a dialog's child controls (the message body and button captions)."""
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    parts = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def cb(child, lparam):
+        n = user32.GetWindowTextLengthW(child)
+        if n:
+            buf = ctypes.create_unicode_buffer(n + 1)
+            user32.GetWindowTextW(child, buf, n + 1)
+            parts.append(buf.value)
+        return True
+
+    user32.EnumChildWindows(hwnd, cb, 0)
+    return " | ".join(parts)
+
+
+def close_dialogs_containing(fragment, pids=None):
+    """WM_CLOSE (= No/Cancel) every Altium dialog whose body contains `fragment` (case-insensitive).
+    Returns [(title, text)] of the dialogs closed. Used by save_doc for the 'A command is currently
+    active and save cannot be completed. Save a copy?' box (backlog B31)."""
+    user32 = ctypes.windll.user32
+    closed = []
+    for hwnd, _, title in find_altium_dialogs(pids):
+        text = dialog_text(hwnd)
+        if fragment.lower() in text.lower():
+            user32.PostMessageW(hwnd, 0x0010, 0, 0)                  # WM_CLOSE -> No
+            closed.append((title, text))
+    return closed
+
+
 def dismiss_altium_dialogs(pids=None):
     """Close every Altium-owned modal dialog. Returns the titles closed.
 

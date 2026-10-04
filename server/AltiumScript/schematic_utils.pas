@@ -1741,6 +1741,33 @@ begin
             else
             begin
                 Replica := Found.Replicate;
+
+                // Replicate drops the pins of some symbols (LED1202QTR, both the
+                // vendor symbol and one made by create_schematic_symbol, 2026-10-02):
+                // the replica arrives with 0 pins. Copy them one by one then.
+                PinCount := 0;
+                ChildIter := Replica.SchIterator_Create;
+                ChildIter.AddFilter_ObjectSet(MkSet(ePin));
+                Param := ChildIter.FirstSchObject;
+                while (Param <> nil) do
+                begin
+                    PinCount := PinCount + 1;
+                    Param := ChildIter.NextSchObject;
+                end;
+                Replica.SchIterator_Destroy(ChildIter);
+                if (PinCount = 0) then
+                begin
+                    ChildIter := Found.SchIterator_Create;
+                    ChildIter.AddFilter_ObjectSet(MkSet(ePin));
+                    Param := ChildIter.FirstSchObject;
+                    while (Param <> nil) do
+                    begin
+                        Replica.AddSchObject(Param.Replicate);
+                        Param := ChildIter.NextSchObject;
+                    end;
+                    Found.SchIterator_Destroy(ChildIter);
+                end;
+
                 Replica.Designator.Text := GetFieldFromPipeString(Rec, 1);
                 Replica.DesignItemID    := GetFieldFromPipeString(Rec, 4);
                 Replica.Orientation     := StrToInt(GetFieldFromPipeString(Rec, 7));

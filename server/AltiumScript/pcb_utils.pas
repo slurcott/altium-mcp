@@ -623,6 +623,7 @@ var
     Board       : IPCB_Board;
     ClassExists : Boolean;
     NetClass    : IPCB_ObjectClass;
+    NetObj      : IPCB_Net;
     ClassIterator : IPCB_BoardIterator;
     i           : Integer;
     ResultProps : TStringList;
@@ -679,24 +680,36 @@ begin
             PCBServer.PostProcess;
         end;
         
-        // Add nets to the class
+        // Add nets to the class. AddMemberByName's return value is unreliable (returned False for
+        // every net on 2026-10-02/03 although the nets were added), so membership is counted
+        // afterwards with IsMember (backlog B35).
         PCBServer.PreProcess;
         for i := 0 to NetNames.Count - 1 do
-        begin
-            // Add each net to the class
-            if NetClass.AddMemberByName(NetNames[i]) then
-                AddedCount := AddedCount + 1;
-        end;
+            NetClass.AddMemberByName(NetNames[i]);
         PCBServer.PostProcess;
-        
+
         // Clean up iterator
+        Board.BoardIterator_Destroy(ClassIterator);
+
+        // Count requested nets that are now members
+        ClassIterator := Board.BoardIterator_Create;
+        ClassIterator.SetState_FilterAll;
+        ClassIterator.AddFilter_ObjectSet(MkSet(eNetObject));
+        NetObj := ClassIterator.FirstPCBObject;
+        while (NetObj <> nil) do
+        begin
+            if (NetNames.IndexOf(NetObj.Name) >= 0) and NetClass.IsMember(NetObj) then
+                AddedCount := AddedCount + 1;
+            NetObj := ClassIterator.NextPCBObject;
+        end;
         Board.BoardIterator_Destroy(ClassIterator);
         
         // Build result JSON
         AddJSONBoolean(ResultProps, 'success', True);
         AddJSONProperty(ResultProps, 'class_name', ClassName);
         AddJSONBoolean(ResultProps, 'class_created', not ClassExists);
-        AddJSONInteger(ResultProps, 'nets_added', AddedCount);
+        AddJSONInteger(ResultProps, 'nets_added', AddedCount);   // requested nets now in the class
+        AddJSONInteger(ResultProps, 'nets_requested', NetNames.Count);
         
         OutputLines := TStringList.Create;
         try

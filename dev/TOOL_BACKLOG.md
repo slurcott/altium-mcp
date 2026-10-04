@@ -278,3 +278,9 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   with IsMember, twice). Return the IsMember count.
 - **B36 (2026-10-03) run_altium_script allow_new_api must be a LIST of member names**; passing true
   fails validation. Say so in the docstring with an example.
+- **B31-B36 status (2026-10-04):** B31 save_doc now watches for the "command is currently active" box,
+  answers No and returns refused=command_active (was: hang + wedge) - NOT yet run live; B32/B36
+  documented in run_altium_script (focus first; allow_new_api is a list); B33 DONE drc_report tool
+  (offline .drc parser, tested on the keypad report); B34 DONE pcb_net_check + pcb_padnet_diff tools
+  (server/pcb_nets.py, tested offline); B35 create_net_class counts members with IsMember - NOT yet run
+  live. New tools load after an MCP server restart.

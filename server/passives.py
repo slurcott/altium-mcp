@@ -269,7 +269,8 @@ def decode_description(text):
         m = re.search(r"(\d+(?:\.\d+)?)\s*([kKM]?)\s*(?:Ω|ohm)", t, re.I) or \
             re.search(r"\b(\d+(?:\.\d+)?)\s*([kKM])\b", t)
         if m:
-            out["value"] = float(m.group(1)) * {"": 1, "k": 1e3, "K": 1e3, "M": 1e6}[m.group(2)]
+            # re.I lets [kKM] match "m" too: "50 mOhm" is milli, not mega
+            out["value"] = float(m.group(1)) * {"": 1, "k": 1e3, "K": 1e3, "M": 1e6, "m": 1e-3}[m.group(2)]
         mw = _DESC_W.search(t)
         if mw:
             if mw.group(3):
