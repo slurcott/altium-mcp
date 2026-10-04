@@ -255,3 +255,26 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   reusing a dump as a spec. off_origin now targets 0,0; docstrings fixed. The Altium-side origin report
   (pcb_utils.pas) ran fine live. Recovery used: IPCB_Primitive.MoveByXY on each primitive of the one
   footprint (index-walk with a fresh GroupIterator per primitive; no TStringList.AddObject - unverified).
+- **B31 (2026-10-03) save_doc / place_components while the user is mid-command lock Altium's saves.**
+  OV4F keypad B_0: place_components (49 TPs) and then save_doc ran while Steve had an interactive PCB
+  command active. save_doc raised "A command is currently active and save cannot be completed. Save a
+  copy?" and timed out (wedge marker set); afterwards Steve's own Ctrl+S was refused the same way and
+  Run > Stop was greyed. Recovery: Save a copy (Yes), close Altium without saving, rename the copy in.
+  Fix: before any write/save, probe for an active interactive command (or the modal) and REFUSE with a
+  message ("finish/Esc the current command, then retry"); never call DoFileSave from a script while
+  one is active. Until then: the user saves; tools only read.
+- **B32 (2026-10-03) scripts wedge when the focused document is not the PCB** (e.g. the DRC report
+  HTML tab). run_altium_script has no doc_path; GetCurrentPCBBoard misbehaves and the sandbox pauses.
+  Fix: run_altium_script(doc_path=...) that focuses the board first, like pcb_query does.
+- **B33 (2026-10-03) violation reader + DRC report reader.** Listing eViolationObject (Name,
+  Description, BoundingRectangle - verified live) worked once and wedged once (B32). Also parse the
+  saved "Design Rule Check - *.drc" report offline: per-rule counts + each violation line. Offline is
+  safer and is what was used for the rest of the session.
+- **B34 (2026-10-04) offline routed-net tools.** The keypad hardware repo now has
+  tools/layout_checks/ (pcbfile.py loader with tracks/vias/arcs/regions + nets, origin from Board6;
+  padnet_diff, net_check connectivity/clearance, tagconnect_check, driver_pin_map). Move the loader
+  into server/ (it extends pcblib_file) and expose padnet_diff + net_check as MCP tools.
+- **B35 (2026-10-03) create_net_class reports nets_added 0 although the nets were added** (verified
+  with IsMember, twice). Return the IsMember count.
+- **B36 (2026-10-03) run_altium_script allow_new_api must be a LIST of member names**; passing true
+  fails validation. Say so in the docstring with an example.
