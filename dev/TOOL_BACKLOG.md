@@ -96,6 +96,15 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
 
 ## Done
 
+- **B43 DONE 2026-10-08: WPF prompts, and the first LIVE dialog click.** Altium's "Unsaved Changes" prompt is a
+  WPF window (class `HwndWrapper[...]`, no child windows): `find_altium_dialogs` did not list it and BM_CLICK has
+  nothing to press. Now listed with class `WPF` while a main window is disabled; `click_dialog_button` accepts
+  only Cancel / Close on it (WM_CLOSE) and refuses every other caption even with allow_other. LIVE:
+  `altium_dialogs` listed the prompt, `altium_dialog_click(hwnd, "Cancel")` closed it, `altium_health` then ok.
+  Reading WPF button names needs UI Automation (no comtypes / pywinauto in the venv; an MSAA attempt through
+  pywin32 failed on property access) - open as an idea, not needed for recovery. Still unproven live: a click
+  on a classic Delphi box (TXPBitBtn OK of the script Error box). 3 tests (WpfPrompt).
+
 - **B38-B42 DONE 2026-10-08** (commit f043809; 19 offline tests in tests/test_pcb_copper.py).
   B38 `pcb_add_copper` (server/pcb_copper.py + tool): LIVE on a scratch board - dry run, write of 3 tracks +
   2 vias on three layers incl. a no-net via and a fractional coordinate, save, read-back all present on the

@@ -270,6 +270,11 @@ class altium_session:
 # =============================================================================
 
 TMESSAGEFORM_TITLES = ("Error", "Warning", "Information", "Confirm")
+# Altium's newer prompts ("Unsaved Changes", seen live 2026-10-08) are WPF windows: class
+# "HwndWrapper[...]", no child windows at all, so their buttons cannot be read or pressed with
+# window messages. They are reported with class "WPF" and can only be CLOSED (= Cancel).
+WPF_CLASS_PREFIX = "HwndWrapper["
+WPF = "WPF"
 
 
 def find_altium_dialogs(pids=None):
@@ -282,7 +287,7 @@ def find_altium_dialogs(pids=None):
     owners = set(altium_pids() if pids is None else pids)
     if not owners:
         return []
-    found = []
+    found, wpf, main_enabled = [], [], []
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def cb(hwnd, lparam):
@@ -300,9 +305,16 @@ def find_altium_dialogs(pids=None):
         if cls.value == "#32770" or (cls.value == "TMessageForm"
                                      and buf.value in TMESSAGEFORM_TITLES):
             found.append((hwnd, cls.value, buf.value))
+        elif cls.value == "TDocumentForm":
+            main_enabled.append(bool(user32.IsWindowEnabled(hwnd)))
+        elif (cls.value.startswith(WPF_CLASS_PREFIX) and buf.value and user32.IsWindowEnabled(hwnd)
+              and user32.GetWindow(hwnd, 4)):                       # GW_OWNER: an owned window
+            wpf.append((hwnd, WPF, buf.value))
         return True
 
     user32.EnumWindows(cb, 0)
+    if main_enabled and not all(main_enabled):          # a WPF window is a dialog only while it is modal
+        found += wpf
     return found
 
 
@@ -357,6 +369,12 @@ def describe_altium_dialogs(pids=None):
     for hwnd, cls, title in find_altium_dialogs(pids):
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if cls == WPF:
+            out.append({"hwnd": int(hwnd), "pid": int(pid.value), "class": cls, "title": title, "text": "",
+                        "buttons": [], "safe_buttons": ["Cancel"],
+                        "note": "WPF prompt: its buttons cannot be read or pressed. 'Cancel' (or 'Close') "
+                                "closes the window, which declines it. Any other answer is the user's."})
+            continue
         buttons = [c for _, c in dialog_buttons(hwnd)]
         text = dialog_text(hwnd)
         out.append({"hwnd": int(hwnd), "pid": int(pid.value), "class": cls, "title": title,
@@ -376,6 +394,13 @@ def click_dialog_button(hwnd, caption, pids=None, allow_other=False):
     if hwnd not in known:
         return False, "that window is not an open Altium dialog"
     want = normalise_caption(caption)
+    if known[hwnd][0] == WPF:
+        if want not in ("cancel", "close"):
+            return False, (f"{known[hwnd][1]!r} is a WPF prompt: its buttons cannot be pressed from outside. "
+                           "Only 'Cancel' / 'Close' (closing the window) is possible; any other answer "
+                           "has to be clicked by the user")
+        ctypes.windll.user32.PostMessageW(hwnd, 0x0010, 0, 0)        # WM_CLOSE = Cancel
+        return True, f"closed {known[hwnd][1]!r} (WM_CLOSE = Cancel)"
     buttons = dialog_buttons(hwnd)
     match = [child for child, cap in buttons if normalise_caption(cap) == want]
     if not match:

@@ -164,5 +164,32 @@ class ModalPreCheck(unittest.TestCase):                                 # B42
         self.assertEqual(g.altium_modal_state(pids=[]), {"blocked": False, "dialogs": []})
 
 
+class WpfPrompt(unittest.TestCase):                                     # B43: "Unsaved Changes" is a WPF window
+    FOUND = [(77, g.WPF, "Unsaved Changes")]
+
+    def test_listed_with_cancel_as_the_only_safe_answer(self):
+        with mock.patch.object(g, "find_altium_dialogs", return_value=self.FOUND), \
+             mock.patch.object(g.ctypes, "windll", create=True):
+            d = g.describe_altium_dialogs([1])[0]
+        self.assertEqual((d["class"], d["title"], d["buttons"], d["safe_buttons"]), ("WPF", "Unsaved Changes", [], ["Cancel"]))
+        self.assertIn("cannot be read or pressed", d["note"])
+
+    def test_cancel_closes_the_window(self):
+        with mock.patch.object(g, "find_altium_dialogs", return_value=self.FOUND), \
+             mock.patch.object(g.ctypes, "windll", create=True) as w:
+            ok, why = g.click_dialog_button(77, "Cancel")
+        self.assertTrue(ok, why)
+        w.user32.PostMessageW.assert_called_once_with(77, 0x0010, 0, 0)
+
+    def test_any_other_answer_is_refused_even_when_allowed(self):
+        with mock.patch.object(g, "find_altium_dialogs", return_value=self.FOUND), \
+             mock.patch.object(g.ctypes, "windll", create=True) as w:
+            for cap in ("Save", "Don't Save", "Yes"):
+                ok, why = g.click_dialog_button(77, cap, allow_other=True)
+                self.assertFalse(ok)
+                self.assertIn("WPF prompt", why)
+            w.user32.PostMessageW.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
