@@ -485,5 +485,123 @@ class CrossSessionLock(unittest.TestCase):
             pass
 
 
+LOOP_EDIT = """var
+    Board : IPCB_Board;
+    Iter  : IPCB_BoardIterator;
+    Via   : IPCB_Via;
+begin
+    Board := PCBServer.GetCurrentPCBBoard;
+    Iter := Board.BoardIterator_Create;
+    Iter.AddFilter_ObjectSet(MkSet(eViaObject));
+    Via := Iter.FirstPCBObject;
+    while Via <> nil do
+    begin
+        PCBServer.SendMessageToRobots(Via.I_ObjectAddress, c_Broadcast, PCBM_BeginModify, c_NoEventData);
+        Via.IsTenting_Top := True;
+        PCBServer.SendMessageToRobots(Via.I_ObjectAddress, c_Broadcast, PCBM_EndModify, c_NoEventData);
+        Via := Iter.NextPCBObject;
+    end;
+    Board.BoardIterator_Destroy(Iter);
+end;"""
+
+TWO_PASS = """var
+    Board : IPCB_Board;
+    Iter  : IPCB_BoardIterator;
+    Via   : IPCB_Via;
+    Hit   : IPCB_Via;
+begin
+    Board := PCBServer.GetCurrentPCBBoard;
+    Hit := nil;
+    Iter := Board.BoardIterator_Create;
+    Iter.AddFilter_ObjectSet(MkSet(eViaObject));
+    Via := Iter.FirstPCBObject;
+    while Via <> nil do
+    begin
+        if not Via.IsTenting_Top then Hit := Via;
+        Via := Iter.NextPCBObject;
+    end;
+    Board.BoardIterator_Destroy(Iter);
+    if Hit <> nil then
+    begin
+        PCBServer.SendMessageToRobots(Hit.I_ObjectAddress, c_Broadcast, PCBM_BeginModify, c_NoEventData);
+        Hit.IsTenting_Top := True;
+        PCBServer.SendMessageToRobots(Hit.I_ObjectAddress, c_Broadcast, PCBM_EndModify, c_NoEventData);
+    end;
+end;"""
+
+
+class EditsInsideIterator(unittest.TestCase):
+    """2026-10-07: tenting two vias inside the iterator loop ran for ever and blocked Altium overnight."""
+
+    def lint(self, body):
+        return g.lint_script(body, CORPUS, SANDBOX_SRC, allow_new_api=("istenting_top", "eviaobject"))
+
+    def test_modify_inside_the_loop_is_refused(self):
+        errs = self.lint(LOOP_EDIT)["errors"]
+        self.assertTrue(any("inside a PCB iterator loop" in e for e in errs), errs)
+
+    def test_modify_after_destroy_is_accepted(self):
+        errs = self.lint(TWO_PASS)["errors"]
+        self.assertFalse(any("inside a PCB iterator loop" in e for e in errs), errs)
+
+    def test_add_inside_the_loop_is_refused(self):
+        body = LOOP_EDIT.replace("Via.IsTenting_Top := True;", "Board.AddPCBObject(Via);")
+        body = body.replace("PCBServer.SendMessageToRobots(Via.I_ObjectAddress, c_Broadcast, PCBM_BeginModify, c_NoEventData);", "")
+        errs = self.lint(body)["errors"]
+        self.assertTrue(any("addpcbobject" in e for e in errs), errs)
+
+
+class DialogButtons(unittest.TestCase):
+
+    def test_altium_error_box_button_class_is_known(self):
+        # The OK button of Altium's script "Error" box is a TXPBitBtn (read live 2026-10-08).
+        self.assertIn("TXPBitBtn", g.BUTTON_CLASSES)
+
+    def test_caption_normalising(self):
+        self.assertEqual(g.normalise_caption("&Don't Save"), "don't save")
+        self.assertEqual(g.normalise_caption("  OK "), "ok")
+
+    def test_only_declining_captions_are_safe(self):
+        for c in ("OK", "&Cancel", "No", "Don't Save", "Close"):
+            self.assertTrue(g.caption_is_safe(c), c)
+        for c in ("Save", "&Yes", "Reload", "Overwrite", "Save All"):
+            self.assertFalse(g.caption_is_safe(c), c)
+
+    def _with_dialog(self, buttons):
+        return (mock.patch.object(g, "find_altium_dialogs", return_value=[(42, "TMessageForm", "Confirm")]),
+                mock.patch.object(g, "dialog_buttons", return_value=buttons))
+
+    def test_click_refuses_a_window_that_is_not_an_altium_dialog(self):
+        with mock.patch.object(g, "find_altium_dialogs", return_value=[]):
+            ok, why = g.click_dialog_button(42, "OK")
+        self.assertFalse(ok)
+        self.assertIn("not an open Altium dialog", why)
+
+    def test_click_refuses_a_committing_caption_unless_allowed(self):
+        a, b = self._with_dialog([(7, "Save"), (8, "Don't Save")])
+        with a, b, mock.patch.object(g.ctypes, "windll", create=True) as w:
+            ok, why = g.click_dialog_button(42, "Save")
+            self.assertFalse(ok)
+            self.assertIn("commits to something", why)
+            w.user32.PostMessageW.assert_not_called()
+            ok, _ = g.click_dialog_button(42, "Save", allow_other=True)
+            self.assertTrue(ok)
+            w.user32.PostMessageW.assert_called_once_with(7, 0x00F5, 0, 0)
+
+    def test_click_presses_the_named_safe_button(self):
+        a, b = self._with_dialog([(7, "Save"), (8, "Don't Save")])
+        with a, b, mock.patch.object(g.ctypes, "windll", create=True) as w:
+            ok, why = g.click_dialog_button(42, "don't save")
+        self.assertTrue(ok, why)
+        w.user32.PostMessageW.assert_called_once_with(8, 0x00F5, 0, 0)
+
+    def test_click_reports_the_buttons_when_the_caption_is_missing(self):
+        a, b = self._with_dialog([(7, "OK")])
+        with a, b:
+            ok, why = g.click_dialog_button(42, "Cancel")
+        self.assertFalse(ok)
+        self.assertIn("OK", why)
+
+
 if __name__ == "__main__":
     unittest.main()

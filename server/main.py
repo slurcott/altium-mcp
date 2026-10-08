@@ -1298,7 +1298,60 @@ async def altium_health(ctx: Context, clear_wedge: bool = False) -> str:
         "wedge_marker": altium_guard.read_wedge(),
         "wedge_cleared": cleared,
         "open_altium_dialogs": [t for _, _, t in altium_guard.find_altium_dialogs(pids)],
+        "dialog_details": altium_guard.describe_altium_dialogs(pids),
     }, indent=2)
+
+
+@mcp.tool()
+async def altium_dialogs(ctx: Context) -> str:
+    """
+    List every dialog Altium currently has open - read only, never launches anything.
+
+    Use it when a tool timed out, was refused, or reported a wedge: a modal dialog is the usual
+    cause, and nothing else will run until it is answered. Each entry gives the window handle,
+    the owning process (a second X2.EXE showing "Information" is the stray instance a blocked
+    launch leaves behind), the title, whatever text can be read (Altium draws the body of its own
+    "Error" boxes, so that is often empty) and the button captions.
+
+    Returns:
+        str: JSON with altium_pids and dialogs [{hwnd, pid, class, title, text, buttons, safe_buttons}]
+    """
+    pids = altium_guard.altium_pids()
+    return json.dumps({"altium_pids": pids,
+                       "dialogs": altium_guard.describe_altium_dialogs(pids)}, indent=2)
+
+
+@mcp.tool()
+async def altium_dialog_click(ctx: Context, hwnd: int, button: str, allow_other: bool = False) -> str:
+    """
+    Press ONE button on ONE open Altium dialog, chosen by its caption. Windows that do not belong
+    to an X2.EXE process are never touched.
+
+    Without allow_other only captions that decline or acknowledge are pressed: OK, Cancel, No,
+    Don't Save, Close, Abort, Ignore. Save / Yes / Reload / Overwrite commit to something - pass
+    allow_other=True only when the user has said which answer they want, and never to save a
+    document whose in-memory state you cannot vouch for.
+
+    Usual recovery after a script error (see altium_dialogs first):
+      1. OK on the "Error" box in the main instance
+      2. OK on "Information" in the extra instance (it then exits)
+      3. altium_health - when no dialogs remain and one instance is left, clear_wedge=True
+
+    Args:
+        hwnd (int): the dialog's handle from altium_dialogs.
+        button (str): the caption to press, e.g. "OK" or "Don't Save".
+        allow_other (bool): permit a caption outside the safe list.
+
+    Returns:
+        str: JSON with clicked, detail, and the dialogs still open half a second later.
+    """
+    pids = altium_guard.altium_pids()
+    ok, detail = altium_guard.click_dialog_button(int(hwnd), button, pids, allow_other)
+    if ok:
+        await asyncio.sleep(0.6)
+    return json.dumps({"clicked": ok, "detail": detail,
+                       "dialogs_now": altium_guard.describe_altium_dialogs(altium_guard.altium_pids())},
+                      indent=2)
 
 
 @mcp.tool()

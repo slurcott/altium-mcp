@@ -284,3 +284,36 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   (offline .drc parser, tested on the keypad report); B34 DONE pcb_net_check + pcb_padnet_diff tools
   (server/pcb_nets.py, tested offline); B35 create_net_class counts members with IsMember - NOT yet run
   live. New tools load after an MCP server restart.
+
+- **B37 (2026-10-08) stuck Altium: read dialogs, click a named button, guard against runaway edit scripts.**
+  Case (Fixture Base, 2026-10-07 night, user away): a sandbox script changed vias INSIDE its `BoardIterator`
+  loop (`PCBM_BeginModify` / `IsTenting_Top` / `PCBM_EndModify`); the iterator revisited the same two vias
+  for ever (12 000+ log steps), the run timed out, Altium showed a `TMessageForm` "Error" box, and the
+  `-REditScript:Stop` attempt started a second X2.EXE showing "Information" (another instance busy).
+  Earlier unsaved rule edits from the same session were lost. Gaps and proposed fixes:
+  1. **Dialog tool.** `dev/x2_dialogs.py` (new, ctypes only) lists every dialog owned by an X2.EXE process
+     with pid, class, title, readable text and button captions, and can click one button by caption
+     (`BM_CLICK` - Altium's own "Error" boxes ignore `WM_CLOSE`, and their OK button's class has no
+     "Button" in its name, so match on the caption). Listing verified live; the click was NOT run (blocked by
+     the agent's permission mode). Wanted as MCP tools: `altium_dialogs()` (read only) and
+     `altium_dialog_click(hwnd, button)`, scoped to X2.EXE windows, with an allow-list of captions
+     (OK / Cancel / No / Don't Save - never Save / Yes / Reload without the caller naming it).
+  2. **Linter:** refuse a script that calls `PCBM_BeginModify`, `AddPCBObject` or `RemovePCBObject` between
+     `FirstPCBObject` and `BoardIterator_Destroy` (collect first, modify in a second pass).
+  3. **Runaway guard:** `SandboxLog` counts calls and aborts the script (raise) past a limit, e.g. 2 000.
+  4. **Auto-save:** offer `save=True` on `run_altium_script` so a successful edit is on disk before the next one.
+  5. **Recovery order** for `unwedge.py`: click OK on "Error" in the main instance, click OK on
+     "Information" in the extra instance (it then exits), `-REditScript:Stop`, probe, clear the marker.
+  6. **Away mode:** a server flag that refuses unverified-API edit scripts when nobody can clear a dialog.
+- **B37 status (2026-10-08):** ROOT CAUSE of "Error box never dismissed": the guard counted only `Button` /
+  `TButton`; the OK of Altium's script Error box is a `TXPBitBtn` (read live), so the box had "0 buttons"
+  and the single-button IDOK path never fired. DONE in `server/altium_guard.py`: `BUTTON_CLASSES`,
+  `dialog_buttons`, `describe_altium_dialogs`, `click_dialog_button` (BM_CLICK, safe-caption list,
+  Altium windows only), `dismiss_altium_dialogs` now also BM_CLICKs a lone button; linter refuses
+  `PCBM_BeginModify` / `AddPCBObject` / `RemovePCBObject` between `FirstPCBObject` and the iterator's
+  Destroy. DONE in `server/main.py`: tools `altium_dialogs` (read only) and `altium_dialog_click`;
+  `altium_health` returns `dialog_details`. 10 new offline tests (63 in test_altium_guard, all pass).
+  `describe_altium_dialogs` read the two live stuck dialogs correctly. NOT run live: any click (BM_CLICK on a
+  TXPBitBtn is untested), the new MCP tools (the server must be restarted to load them). NOT done: runaway
+  guard in SandboxLog (raising in DelphiScript would itself pause the engine - needs another idea),
+  `save=True` on run_altium_script, away mode, the unwedge.py recovery order. Uncommitted.

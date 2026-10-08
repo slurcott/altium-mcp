@@ -52,3 +52,12 @@ priority
 rulekind
 pcbrulefactory
 commatext
+chr
+minsoldermasksliver
+istenting_bottom
+istenting_top
+moveable
+sourcecomponentlibrary
+emidlayer1
+emidlayer2
+emechanical5

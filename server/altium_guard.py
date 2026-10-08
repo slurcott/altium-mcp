@@ -249,21 +249,85 @@ def find_altium_dialogs(pids=None):
     return found
 
 
-def _button_count(hwnd):
+# Window classes Altium uses for push buttons. "TXPBitBtn" is the OK button of Altium's own
+# script "Error" box (seen 2026-10-08): missing it here meant that box was never answered.
+BUTTON_CLASSES = ("Button", "TButton", "TXPBitBtn", "TBitBtn", "TcxButton")
+
+# Captions that only ever decline or acknowledge. Anything else (Save, Yes, Reload, Overwrite ...)
+# commits to something and must be named deliberately by the caller.
+SAFE_CAPTIONS = ("ok", "cancel", "no", "don't save", "close", "abort", "ignore")
+
+
+def normalise_caption(text):
+    """'&Don\'t Save' -> "don't save": drop the accelerator mark, trim, lower-case."""
+    return (text or "").replace("&", "").strip().lower()
+
+
+def caption_is_safe(caption):
+    return normalise_caption(caption) in SAFE_CAPTIONS
+
+
+def dialog_buttons(hwnd):
+    """[(child hwnd, caption)] of the visible push buttons on a dialog."""
     from ctypes import wintypes
     user32 = ctypes.windll.user32
-    n = [0]
+    out = []
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def cb(child, lparam):
-        cls = ctypes.create_unicode_buffer(32)
-        user32.GetClassNameW(child, cls, 32)
-        if cls.value in ("Button", "TButton") and user32.IsWindowVisible(child):
-            n[0] += 1
+        cls = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(child, cls, 64)
+        if cls.value in BUTTON_CLASSES and user32.IsWindowVisible(child):
+            n = user32.GetWindowTextLengthW(child)
+            buf = ctypes.create_unicode_buffer(n + 1)
+            user32.GetWindowTextW(child, buf, n + 1)
+            out.append((child, buf.value.replace("&", "")))
         return True
 
     user32.EnumChildWindows(hwnd, cb, 0)
-    return n[0]
+    return out
+
+
+def _button_count(hwnd):
+    return len(dialog_buttons(hwnd))
+
+
+def describe_altium_dialogs(pids=None):
+    """Every Altium-owned dialog as a dict: hwnd, pid, class, title, text, buttons. Read only."""
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    out = []
+    for hwnd, cls, title in find_altium_dialogs(pids):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        buttons = [c for _, c in dialog_buttons(hwnd)]
+        text = dialog_text(hwnd)
+        out.append({"hwnd": int(hwnd), "pid": int(pid.value), "class": cls, "title": title,
+                    "text": text, "buttons": buttons,
+                    "safe_buttons": [b for b in buttons if caption_is_safe(b)]})
+    return out
+
+
+def click_dialog_button(hwnd, caption, pids=None, allow_other=False):
+    """Press one button, by caption, on one Altium dialog. Returns (ok, detail).
+
+    Refuses a window that is not an Altium dialog, a caption the dialog does not have, and - unless
+    allow_other - any caption outside SAFE_CAPTIONS. BM_CLICK is posted to the button itself, which
+    works for Altium's Delphi message boxes where WM_CLOSE and WM_COMMAND IDOK are ignored.
+    """
+    known = {h: (c, t) for h, c, t in find_altium_dialogs(pids)}
+    if hwnd not in known:
+        return False, "that window is not an open Altium dialog"
+    want = normalise_caption(caption)
+    buttons = dialog_buttons(hwnd)
+    match = [child for child, cap in buttons if normalise_caption(cap) == want]
+    if not match:
+        return False, f"no button named {caption!r}; this dialog has {[c for _, c in buttons]}"
+    if not allow_other and want not in SAFE_CAPTIONS:
+        return False, (f"{caption!r} commits to something (only {list(SAFE_CAPTIONS)} are pressed "
+                       "without allow_other=True)")
+    ctypes.windll.user32.PostMessageW(match[0], 0x00F5, 0, 0)        # BM_CLICK
+    return True, f"clicked {caption!r} on {known[hwnd][1]!r}"
 
 
 def dialog_text(hwnd):
@@ -315,8 +379,10 @@ def dismiss_altium_dialogs(pids=None):
         time.sleep(0.5)
         still = {h for h, _, _ in find_altium_dialogs(pids)}
         for hwnd, _, _ in hits:
-            if hwnd in still and _button_count(hwnd) == 1:
+            buttons = dialog_buttons(hwnd) if hwnd in still else []
+            if len(buttons) == 1:
                 user32.PostMessageW(hwnd, 0x0111, 1, 0)          # WM_COMMAND IDOK
+                user32.PostMessageW(buttons[0][0], 0x00F5, 0, 0)  # BM_CLICK on its only button
     return [t for _, _, t in hits]
 
 
@@ -649,6 +715,30 @@ def lint_script(body, corpus, sandbox_src, allow_new_api=()):
                     "run, and a wrong member name pauses the engine. Check it against the API "
                     "reference (altium-script skill); if it is real, pass it in allow_new_api "
                     "- ideally probing new names in a short script of their own.")
+
+    # --- edits inside a board iterator: runs for ever -------------------------
+    # 2026-10-07: PCBM_BeginModify / IsTenting / PCBM_EndModify on vias inside `while Via <> nil`
+    # made the iterator hand back the same two vias 6000 times; the run timed out and left an
+    # "Error" box nobody could click.
+    low = [(t[1].lower(), t[2]) for t in toks if t[0] == "ident"]
+    i = 0
+    while i < len(low):
+        if low[i][0] == "firstpcbobject":
+            j = i + 1
+            while j < len(low) and low[j][0] not in ("boarditerator_destroy", "groupiterator_destroy",
+                                                     "spatialiterator_destroy"):
+                if low[j][0] in ("pcbm_beginmodify", "addpcbobject", "removepcbobject"):
+                    errors.append(
+                        f"line {low[j][1]}: `{low[j][0]}` inside a PCB iterator loop (between "
+                        "FirstPCBObject and the iterator's Destroy). Changing objects while "
+                        "iterating makes the iterator return them again - the loop never ends. "
+                        "Find ONE object that still needs the change, destroy the iterator, change "
+                        "it, and repeat with a pass counter as the limit; or record coordinates in "
+                        "the first pass and edit in a second.")
+                    break
+                j += 1
+            i = j
+        i += 1
 
     # --- silent-logic traps: compile fine, then do the wrong thing -----------
     src = rest
