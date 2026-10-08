@@ -94,30 +94,39 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   sandbox: e.g. `DM_DescriptorString`, `DM_ErrorLevel`, the violating object) and
   emit net/designator per violation.
 
-**B38. `pcb_add_copper`: write tracks and vias from a table** (open, 2026-10-08)
-- Evidence: a 4-layer board was routed by an offline router and written with a hand-pasted sandbox script
-  (551 objects, then 94 stitching vias): read a table file with the script's own `TStringList`, find each net
-  by name with a read-only iterator, create with `PCBServer.PCBObjectFactory`, assign the net, no edits inside
-  iterators. Promote that script to a tool with a dry-run flag and a built-in save + read-back.
-
-**B39. `pcb_query` pads without their component** (open, 2026-10-08)
-- A pad record has name, net, position, size - not the designator it belongs to. Every placement and mirror
-  check had to match pads by net and pin name or fall back to the offline reader.
-
-**B40. `pcb_net_check`: false break and pessimistic gaps** (open, 2026-10-08)
-- A track passing through a same-net pad without an end point on it is counted as a separate island.
-- Near-miss gap uses the pad's half-diagonal for round pads.
-
-**B41. offline board reader: polygon net and layer names** (open, 2026-10-08)
-- `pcb_nets.load()` returns pour regions with net None, and short layer names (`Top`, `Mid1`) where every
-  other tool uses Altium's (`Top Layer`, `Mid Layer 1`).
-
-**B42. modal-dialog preflight for `run_altium_script`** (open, 2026-10-08)
-- A script launched while the user had the Replace Component window open never started; the guard marked a
-  wedge. `altium_dialogs` reported nothing afterwards. Detect a modal Altium form before launching and say
-  "close the open dialog", instead of marking the engine wedged.
-
 ## Done
+
+- **B38-B42 DONE 2026-10-08** (commit f043809; 19 offline tests in tests/test_pcb_copper.py).
+  B38 `pcb_add_copper` (server/pcb_copper.py + tool): LIVE on a scratch board - dry run, write of 3 tracks +
+  2 vias on three layers incl. a no-net via and a fractional coordinate, save, read-back all present on the
+  right nets, repeat refused. B39 pad `component` in `pcb_query`: LIVE (J_A pads and a free hole).
+  B40 island through a pad + round-pad gap, B41 polygon list / poured-region net / pad shape / `long_layer()`:
+  checked on a real 4-layer board file. B42 modal pre-check in `preflight` and in the no-log branch: reads
+  "not blocked" live; the blocked case is covered by a mocked test and one live check with the user.
+  Original entries:
+  **B38. `pcb_add_copper`: write tracks and vias from a table** (open, 2026-10-08)
+  - Evidence: a 4-layer board was routed by an offline router and written with a hand-pasted sandbox script
+    (551 objects, then 94 stitching vias): read a table file with the script's own `TStringList`, find each net
+    by name with a read-only iterator, create with `PCBServer.PCBObjectFactory`, assign the net, no edits inside
+    iterators. Promote that script to a tool with a dry-run flag and a built-in save + read-back.
+
+  **B39. `pcb_query` pads without their component** (open, 2026-10-08)
+  - A pad record has name, net, position, size - not the designator it belongs to. Every placement and mirror
+    check had to match pads by net and pin name or fall back to the offline reader.
+
+  **B40. `pcb_net_check`: false break and pessimistic gaps** (open, 2026-10-08)
+  - A track passing through a same-net pad without an end point on it is counted as a separate island.
+  - Near-miss gap uses the pad's half-diagonal for round pads.
+
+  **B41. offline board reader: polygon net and layer names** (open, 2026-10-08)
+  - `pcb_nets.load()` returns pour regions with net None, and short layer names (`Top`, `Mid1`) where every
+    other tool uses Altium's (`Top Layer`, `Mid Layer 1`).
+
+  **B42. modal-dialog preflight for `run_altium_script`** (open, 2026-10-08)
+  - A script launched while the user had the Replace Component window open never started; the guard marked a
+    wedge. `altium_dialogs` reported nothing afterwards. Detect a modal Altium form before launching and say
+    "close the open dialog", instead of marking the engine wedged.
+
 
 - **D1.** Preflight, cross-session lock, wedge marker, and `altium_health` (74452d8).
 - **D2.** Sandbox linter, `allow_new_api`, and `verified_api.txt` learning (74452d8).
