@@ -2652,6 +2652,15 @@ begin
         Result := Prim.Net.Name;
 end;
 
+// Designator of the component a pad belongs to, or '' for a free pad (B39)
+function PadOwnerName(Prim: IPCB_Primitive): String;
+begin
+    Result := '';
+    if Prim.InComponent then
+        if Prim.Component <> nil then
+            Result := Prim.Component.Name.Text;
+end;
+
 // pcb_query: one pipe-delimited line per board object, parsed and filtered in
 // Python (server/altium_dump.py). Uses only member names already proven by
 // get_footprint_primitives and get_net_connections. Spec (written by Python):
@@ -2747,7 +2756,7 @@ begin
                 OutLines.Add('PAD|' + Layer2String(Prim.Layer) + '|' + PrimNetName(Prim) + '|' +
                     Prim.Name + '|' + RelMils(Prim.x, OX) + '|' + RelMils(Prim.y, OY) + '|' +
                     FloatToStr(CoordToMils(Prim.TopXSize)) + '|' + FloatToStr(CoordToMils(Prim.TopYSize)) + '|' +
-                    FloatToStr(CoordToMils(Prim.HoleSize)))
+                    FloatToStr(CoordToMils(Prim.HoleSize)) + '|' + PadOwnerName(Prim))
             else if (Prim.ObjectId = eViaObject) and (Pos(',VIA,', Kinds) > 0) then
                 OutLines.Add('VIA|' + PrimNetName(Prim) + '|' +
                     RelMils(Prim.x, OX) + '|' + RelMils(Prim.y, OY) + '|' +

@@ -20,7 +20,7 @@ _TAG_TO_KIND = {v: k for k, v in PCB_KINDS.items()}
 _FIELDS = {
     "TRK": ["layer", "net", "x1", "y1", "x2", "y2", "width"],
     "ARC": ["layer", "net", "cx", "cy", "radius", "start_angle", "end_angle", "width"],
-    "PAD": ["layer", "net", "name", "x", "y", "x_size", "y_size", "hole"],
+    "PAD": ["layer", "net", "name", "x", "y", "x_size", "y_size", "hole", "component"],
     "VIA": ["net", "x", "y", "size", "hole", "low_layer", "high_layer"],
     "FIL": ["layer", "net", "x1", "y1", "x2", "y2"],
     "REG": ["layer", "net", "region_kind", "x1", "y1", "x2", "y2"],
@@ -63,7 +63,7 @@ def parse_pcb_dump(text):
         for name, val in zip(fields, parts):
             if name in _NUMERIC:
                 obj[name] = _num(val)
-            elif name == "net":
+            elif name in ("net", "component"):
                 obj[name] = val or None
             else:
                 obj[name] = val

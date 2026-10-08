@@ -135,7 +135,64 @@ def preflight(pids=None):
                            "a paused executor. Take a screenshot to see what is up. If Altium "
                            "is actually fine, call altium_health(clear_wedge=True); "
                            "otherwise force-restart (the marker clears itself):\n" + RESTART_HINT)
+    modal = altium_modal_state(pids)
+    if modal["blocked"]:
+        titles = ", ".join(repr(t) for t in modal["dialogs"]) or "title not readable"
+        return False, ("a dialog is open in Altium (" + titles + ") and its main window is waiting on it. "
+                       "A script launched now would not start. Close or answer that dialog, then run again. "
+                       "Nothing was launched and Altium is NOT marked wedged.")
     return True, f"ok - one Altium instance (PID {pids[0]})"
+
+
+MAIN_WINDOW_CLASS = "TDocumentForm"
+
+
+def altium_modal_state(pids=None):
+    """Is Altium waiting on a modal dialog of any kind (B42)?
+
+    A modal form disables Altium's main window(s). That is the test: a visible TDocumentForm that is not
+    enabled. The titles of the other visible, enabled top-level windows of the same process are returned as the
+    likely dialog. Covers the windows find_altium_dialogs does not know (Replace Component, Properties browsers,
+    change orders, Preferences). Read only. Returns {"blocked": bool, "dialogs": [titles]}.
+    """
+    out = {"blocked": False, "dialogs": []}
+    try:
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+    except (ImportError, AttributeError):
+        return out
+    owners = set(altium_pids() if pids is None else pids)
+    if not owners:
+        return out
+    mains, others = [], []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def cb(hwnd, lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value not in owners:
+            return True
+        cls = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(hwnd, cls, 64)
+        n = user32.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(n + 1)
+        user32.GetWindowTextW(hwnd, buf, n + 1)
+        enabled = bool(user32.IsWindowEnabled(hwnd))
+        if cls.value == MAIN_WINDOW_CLASS:
+            mains.append(enabled)
+        elif enabled and buf.value:
+            others.append(buf.value)
+        return True
+
+    try:
+        user32.EnumWindows(cb, 0)
+    except Exception:
+        return out
+    out["blocked"] = bool(mains) and not all(mains)
+    out["dialogs"] = others[:5] if out["blocked"] else []
+    return out
 
 
 # =============================================================================

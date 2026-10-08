@@ -23,6 +23,15 @@ import pcblib_file as p  # noqa: E402
 U = p.UNIT
 LAYER = {1: "Top", 2: "Mid1", 3: "Mid2", 32: "Bottom", 39: "Mid1", 40: "Mid2", 74: "Multi"}
 COPPER = ("Top", "Mid1", "Mid2", "Bottom")
+# Altium's own layer names for the short ones used here (B41, 2026-10-08).
+LONG_LAYER = {"Top": "Top Layer", "Bottom": "Bottom Layer", "Mid1": "Mid Layer 1", "Mid2": "Mid Layer 2",
+              "Multi": "Multi Layer", "MultiLayer": "Multi Layer"}
+POLY_LAYER = {"TOP": "Top", "BOTTOM": "Bottom", "MID1": "Mid1", "MID2": "Mid2"}
+
+
+def long_layer(name):
+    """'Top' -> 'Top Layer', 'Mid2' -> 'Mid Layer 2'; anything else is returned unchanged."""
+    return LONG_LAYER.get(name, name)
 DEFAULT_PCB = None
 
 
@@ -47,7 +56,18 @@ def load(path=None):
     net = lambda i: nets[i] if i < len(nets) else None
     cname = lambda i: comps[i].get("SOURCEDESIGNATOR") if i < len(comps) else None
     B = {"path": path, "saved": time.ctime(os.path.getmtime(path)), "origin": (OX, OY), "nets": nets,
-         "comps": {}, "pads": [], "tracks": [], "vias": [], "arcs": [], "regions": [], "fills": []}
+         "comps": {}, "pads": [], "tracks": [], "vias": [], "arcs": [], "regions": [], "fills": [],
+         "polygons": []}
+    # Polygon pours: a poured region carries no net of its own, only the index of its polygon (B41).
+    try:
+        polys = p._text_records(st.get("Polygons6", b""))
+    except Exception:
+        polys = []
+    for g in polys:
+        ni = g.get("NET")
+        pn = net(int(ni)) if ni not in (None, "") and str(ni).lstrip("-").isdigit() and int(ni) >= 0 else None
+        lay = str(g.get("LAYER", ""))
+        B["polygons"].append(dict(layer=POLY_LAYER.get(lay.upper(), lay), net=pn, kind=g.get("POLYGONTYPE")))
     for c in comps:
         B["comps"][c.get("SOURCEDESIGNATOR")] = dict(x=p._mil(c.get("X", 0)) - OX, y=p._mil(c.get("Y", 0)) - OY,
                                                      rot=float(c.get("ROTATION", 0) or 0), layer=c.get("LAYER"),
@@ -58,7 +78,8 @@ def load(path=None):
         ni, ci = struct.unpack_from("<H", subs[4], 3)[0], struct.unpack_from("<H", subs[4], 7)[0]
         q = p._pad(subs)
         B["pads"].append(dict(comp=cname(ci), name=q["name"], net=net(ni), x=q["x"] - OX, y=q["y"] - OY,
-                              w=q["w"], h=q["h"], rot=q["rotation"], layer=q["layer"], hole=q["hole"]))
+                              w=q["w"], h=q["h"], rot=q["rotation"], layer=q["layer"], hole=q["hole"],
+                              shape=q.get("shape")))
     for t, subs in _records(st.get("Tracks6", b""), lambda t: 1):
         b = subs[0]
         x1, y1, x2, y2, w = struct.unpack_from("<5i", b, 13)
@@ -84,7 +105,11 @@ def load(path=None):
         (nv,) = struct.unpack_from("<I", b, j)
         pts = [(vx / U - OX, vy / U - OY) for vx, vy in
                (struct.unpack_from("<2d", b, j + 4 + 16 * k) for k in range(nv))]
-        B["regions"].append(dict(layer=LAYER[b[0]], net=net(struct.unpack_from("<H", b, 3)[0]),
+        rnet = net(struct.unpack_from("<H", b, 3)[0])
+        pi = struct.unpack_from("<H", b, 5)[0]
+        if rnet is None and pi < len(B["polygons"]):
+            rnet = B["polygons"][pi]["net"]          # poured copper takes its polygon's net
+        B["regions"].append(dict(layer=LAYER[b[0]], net=rnet, polygon=pi if pi < len(B["polygons"]) else None,
                                  comp=cname(struct.unpack_from("<H", b, 7)[0]), pts=pts))
     return B
 
@@ -98,9 +123,14 @@ def seg_dist(px, py, x1, y1, x2, y2):
 
 
 def pad_edge_dist(px, py, pd):
-    """Distance from a point to a pad's edge (rectangle approximation, right-angle rotations)."""
+    """Distance from a point to a pad's edge (right-angle rotations). Round pads are measured as a circle or a
+    stadium, not as their bounding rectangle: the rectangle made a real 9.5 mil gap read -3.5 mil (B40)."""
     w, h = (pd["w"], pd["h"]) if round(pd["rot"]) % 180 == 0 else (pd["h"], pd["w"])
-    return math.hypot(max(abs(px - pd["x"]) - w / 2, 0), max(abs(py - pd["y"]) - h / 2, 0))
+    dx, dy = abs(px - pd["x"]), abs(py - pd["y"])
+    if pd.get("shape") == "round":
+        r = min(w, h) / 2
+        return max(math.hypot(max(dx - (w / 2 - r), 0), max(dy - (h / 2 - r), 0)) - r, 0)
+    return math.hypot(max(dx - w / 2, 0), max(dy - h / 2, 0))
 
 
 # ---- routed-net checks (from the OV4F keypad repo tools/layout_checks, 2026-10-04; backlog B34) ----
@@ -137,7 +167,11 @@ def islands(B, net):
             t, (k, o) = (a, (kb, b)) if ka == "t" else (b, (ka, a))
             if k == "v":
                 return seg_dist(o["x"], o["y"], t["x1"], t["y1"], t["x2"], t["y2"]) < o["d"] / 2
-            return any(pad_edge_dist(x, y, o) < 1.0 for x, y in ends(t))
+            if any(pad_edge_dist(x, y, o) < 1.0 for x, y in ends(t)):
+                return True
+            # a track that runs THROUGH the pad without ending on it is still connected (B40): its centre line
+            # passes inside the pad copper
+            return seg_dist(o["x"], o["y"], t["x1"], t["y1"], t["x2"], t["y2"]) < min(o["w"], o["h"]) / 2
         if {ka, kb} == {"v", "p"}:
             v, pd = (a, b) if ka == "v" else (b, a)
             return pad_edge_dist(v["x"], v["y"], pd) < v["d"] / 2

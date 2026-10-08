@@ -1260,6 +1260,18 @@ async def run_altium_script(ctx: Context, script: str, timeout_seconds: int = 12
             "steps": steps,
             "dialogs_dismissed": dialogs}, indent=2)
 
+    modal = altium_guard.altium_modal_state()
+    if modal["blocked"]:
+        altium_guard.archive_run("run_altium_script", "blocked_by_dialog", script, dialogs=modal["dialogs"])
+        return json.dumps({
+            "success": False,
+            "error": "the script did not start: a dialog is open in Altium",
+            "open_dialogs": modal["dialogs"],
+            "diagnosis": "Altium's main window is disabled by a modal dialog, so the launch was queued or dropped. "
+                         "This is not a script fault and Altium is NOT marked wedged.",
+            "recovery": "Ask the user to close or answer the dialog, check altium_health, then run again.",
+            "dialogs_dismissed": dialogs}, indent=2)
+
     altium_guard.mark_wedged("sandbox script wrote no log at all")
     altium_guard.archive_run("run_altium_script", "no_log", script)
     return json.dumps({
@@ -3402,6 +3414,94 @@ async def pcb_net_check(ctx: Context, doc_path: str, nets: list, clearance_mils:
     """
     import pcb_nets
     return json.dumps({"success": True, **pcb_nets.net_check(doc_path, nets, clearance_mils)}, indent=1)
+
+
+@mcp.tool()
+async def pcb_add_copper(ctx: Context, doc_path: str, plan_file: str, dry_run: bool = True,
+                         timeout_seconds: int = 300) -> str:
+    """
+    Write tracks and vias from a plan file into an OPEN board, save it, and prove from the saved file
+    that every object landed on its layer with its net. For routing or stitching computed outside
+    Altium (e.g. a grid router's result). EDITS THE BOARD when dry_run is False.
+
+    Always call with dry_run=True first: it reads the table inside Altium and looks up every net,
+    creating nothing. Then call again with dry_run=False.
+
+    The plan is JSON, mils from the board origin:
+        {"tracks": [{"layer": "Mid Layer 1", "x1":, "y1":, "x2":, "y2":, "w":, "net": "SDA"}, ...],
+         "vias":   [{"x":, "y":, "d": 20, "hole": 10, "net": "SDA"}, ...]}
+    Layers: Top Layer, Bottom Layer, Mid Layer 1-4. Vias span top to bottom.
+
+    Safeguards: the plan is checked before anything runs; a write is refused when the saved board
+    already holds the planned objects (a repeat of a finished write) or holds some of them (a half
+    finished one - look before repeating); nothing is created or changed inside an iterator loop.
+    Polygon pours are not touched: the user must Repour All and run DRC afterwards.
+
+    Args:
+        doc_path (str): the .PcbDoc, open in Altium.
+        plan_file (str): the JSON plan.
+        dry_run (bool): True = check only (default). False = write, save and verify.
+        timeout_seconds (int): for the Altium run.
+
+    Returns:
+        str: JSON with the Altium result (tracks, vias, nets not found), the save result and the
+             read-back from the saved file (missing objects, objects on another net).
+    """
+    import pcb_copper
+    import pcb_nets
+    board = os.path.abspath(doc_path).replace("/", "\\")
+    if not board.lower().endswith(".pcbdoc") or not os.path.exists(board):
+        return json.dumps({"success": False, "error": f"not an existing .PcbDoc: {board}"})
+    try:
+        plan = pcb_copper.load_plan(plan_file)
+    except (OSError, ValueError, KeyError) as e:
+        return json.dumps({"success": False, "error": f"cannot read the plan: {e}"})
+    problems = pcb_copper.check_plan(plan)
+    if problems:
+        return json.dumps({"success": False, "error": "plan refused - nothing was sent to Altium",
+                           "problems": problems}, indent=1)
+    try:
+        before = pcb_copper.verify(pcb_nets.load(board), plan, pcb_nets.long_layer)
+    except Exception as e:
+        return json.dumps({"success": False, "error": f"cannot read the saved board: {e}"})
+    already = (before["planned_tracks"] - before["missing_tracks"]) + (before["planned_vias"] - before["missing_vias"])
+    total = before["planned_tracks"] + before["planned_vias"]
+    if not dry_run and already:
+        return json.dumps({"success": False,
+                           "error": ("the saved board already holds all of this plan - nothing to write"
+                                     if already == total else
+                                     f"the saved board already holds {already} of the {total} planned objects - "
+                                     "a repeat would duplicate them; look at the board first"),
+                           "saved_board": before}, indent=1)
+    table = EXCHANGE_DIR / "copper_table.txt"
+    table.write_text("\n".join(pcb_copper.table_lines(plan)) + "\n", encoding="ascii", newline="\r\n")
+    script = pcb_copper.write_script(board, str(table).replace("/", "\\"), dry_run)
+    run = json.loads(await run_altium_script(ctx, script=script, timeout_seconds=timeout_seconds,
+                                             allow_new_api=pcb_copper.NEW_API))
+    if not run.get("success"):
+        return json.dumps({"success": False, "stage": "altium", "run": run}, indent=1)
+    res = pcb_copper.parse_result(run.get("result"))
+    if res is None:
+        return json.dumps({"success": False, "stage": "altium", "error": run.get("result"), "run": run}, indent=1)
+    out = {"success": True, "dry_run": dry_run, "altium": res,
+           "already_in_saved_board": already, "dialogs_dismissed": run.get("dialogs_dismissed")}
+    if res["nets_not_found"]:
+        out["success"] = False
+        out["error"] = "nets in the plan do not exist on the board: " + ", ".join(res["missing_nets"])
+    if dry_run:
+        out["next"] = "call again with dry_run=False to write" if out["success"] else "fix the plan"
+        return json.dumps(out, indent=1)
+    saved = json.loads(await save_doc(ctx, board))
+    out["saved"] = saved
+    if not saved.get("success"):
+        out["success"] = False
+        out["error"] = "objects were added but the save was not confirmed - save in Altium, then verify"
+        return json.dumps(out, indent=1)
+    after = pcb_copper.verify(pcb_nets.load(board), plan, pcb_nets.long_layer)
+    out["read_back"] = after
+    out["success"] = out["success"] and after["ok"]
+    out["next"] = "user: Tools > Polygon Pours > Repour All, then run DRC"
+    return json.dumps(out, indent=1)
 
 
 @mcp.tool()
