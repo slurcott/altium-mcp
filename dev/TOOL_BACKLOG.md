@@ -94,6 +94,29 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   sandbox: e.g. `DM_DescriptorString`, `DM_ErrorLevel`, the violating object) and
   emit net/designator per violation.
 
+**B38. `pcb_add_copper`: write tracks and vias from a table** (open, 2026-10-08)
+- Evidence: a 4-layer board was routed by an offline router and written with a hand-pasted sandbox script
+  (551 objects, then 94 stitching vias): read a table file with the script's own `TStringList`, find each net
+  by name with a read-only iterator, create with `PCBServer.PCBObjectFactory`, assign the net, no edits inside
+  iterators. Promote that script to a tool with a dry-run flag and a built-in save + read-back.
+
+**B39. `pcb_query` pads without their component** (open, 2026-10-08)
+- A pad record has name, net, position, size - not the designator it belongs to. Every placement and mirror
+  check had to match pads by net and pin name or fall back to the offline reader.
+
+**B40. `pcb_net_check`: false break and pessimistic gaps** (open, 2026-10-08)
+- A track passing through a same-net pad without an end point on it is counted as a separate island.
+- Near-miss gap uses the pad's half-diagonal for round pads.
+
+**B41. offline board reader: polygon net and layer names** (open, 2026-10-08)
+- `pcb_nets.load()` returns pour regions with net None, and short layer names (`Top`, `Mid1`) where every
+  other tool uses Altium's (`Top Layer`, `Mid Layer 1`).
+
+**B42. modal-dialog preflight for `run_altium_script`** (open, 2026-10-08)
+- A script launched while the user had the Replace Component window open never started; the guard marked a
+  wedge. `altium_dialogs` reported nothing afterwards. Detect a modal Altium form before launching and say
+  "close the open dialog", instead of marking the engine wedged.
+
 ## Done
 
 - **D1.** Preflight, cross-session lock, wedge marker, and `altium_health` (74452d8).
@@ -305,6 +328,10 @@ the run archive), `~/.claude/skills/altium-script/GOTCHAS.md`, and the session i
   5. **Recovery order** for `unwedge.py`: click OK on "Error" in the main instance, click OK on
      "Information" in the extra instance (it then exits), `-REditScript:Stop`, probe, clear the marker.
   6. **Away mode:** a server flag that refuses unverified-API edit scripts when nobody can clear a dialog.
+- **B37 live use (2026-10-08, later the same day):** `altium_health` + `altium_health(clear_wedge=True)` used
+  after a false wedge (see B42); the iterator linter rule held through 11 edit scripts (locks, 551 routed
+  objects, 94 stitching vias, library footprint and symbol) with no hang. `altium_dialog_click` still not
+  exercised on a live stuck dialog.
 - **B37 status (2026-10-08):** ROOT CAUSE of "Error box never dismissed": the guard counted only `Button` /
   `TButton`; the OK of Altium's script Error box is a `TXPBitBtn` (read live), so the box had "0 buttons"
   and the single-button IDOK path never fired. DONE in `server/altium_guard.py`: `BUTTON_CLASSES`,
